@@ -1,0 +1,10 @@
+{
+  "arena": "the_ville",
+  "start_date": "February 13, 2023",
+  "sec_per_step": 10,
+  "agents": [
+    { "template": "Isabella Rodriguez", "spawn": [72, 14] },
+    { "template": "Klaus Mueller",       "spawn": [126, 46] },
+    { "template": "Maria Lopez",         "spawn": [123, 57] }
+  ]
+}

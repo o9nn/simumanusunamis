@@ -1,0 +1,9 @@
+{
+  "maze_name": "the_ville",
+  "maze_assets": "the_ville",
+  "display_name": "The Ville",
+  "default_spawn_points": {
+    "default": [72, 14]
+  },
+  "special_constraint": ""
+}
