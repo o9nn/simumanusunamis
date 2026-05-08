@@ -35,6 +35,166 @@ from utils import *
 from maze import *
 from persona.persona import *
 
+# ---------------------------------------------------------------------------
+# Configurable-agent / arena helpers
+# ---------------------------------------------------------------------------
+# These paths mirror the layout described in the agent_templates, arenas, and
+# scenarios directories under static_dirs/assets/.
+_AGENT_TEMPLATES_DIR = f"{maze_assets_loc}/agent_templates"
+_ARENAS_DIR          = f"{maze_assets_loc}/arenas"
+_SCENARIOS_DIR       = f"{maze_assets_loc}/scenarios"
+
+
+def _list_agent_templates():
+  """Return a sorted list of available agent template names."""
+  if not os.path.isdir(_AGENT_TEMPLATES_DIR):
+    return []
+  return sorted(
+    d for d in os.listdir(_AGENT_TEMPLATES_DIR)
+    if os.path.isdir(os.path.join(_AGENT_TEMPLATES_DIR, d))
+  )
+
+
+def _list_arenas():
+  """Return a sorted list of available arena names (those with a config.json)."""
+  if not os.path.isdir(_ARENAS_DIR):
+    return []
+  return sorted(
+    d for d in os.listdir(_ARENAS_DIR)
+    if os.path.isfile(os.path.join(_ARENAS_DIR, d, "config.json"))
+  )
+
+
+def _build_scratch_from_template(template_data):
+  """
+  Merge a scratch_template.json dict with the ephemeral runtime fields that
+  the Scratch class expects, and return the completed scratch dict.
+  """
+  agent_name = template_data["name"]
+  scratch = dict(template_data)
+  scratch.update({
+    "curr_time": None,
+    "curr_tile": None,
+    "daily_req": [],
+    "f_daily_schedule": [],
+    "f_daily_schedule_hourly_org": [],
+    "act_address": None,
+    "act_start_time": None,
+    "act_duration": None,
+    "act_description": None,
+    "act_pronunciatio": None,
+    "act_event": [agent_name, None, None],
+    "act_obj_description": None,
+    "act_obj_pronunciatio": None,
+    "act_obj_event": [None, None, None],
+    "chatting_with": None,
+    "chat": None,
+    "chatting_with_buffer": {},
+    "chatting_end_time": None,
+    "act_path_set": False,
+    "planned_path": [],
+  })
+  return scratch
+
+
+def create_sim_from_scenario(scenario_arg, new_sim_name):
+  """
+  Create a new base-simulation folder from a scenario definition.
+
+  <scenario_arg> is either a bare scenario name (looked up in
+  assets/scenarios/) or a path to a scenario JSON file.
+  <new_sim_name> is the name of the simulation folder to create under
+  fs_storage/.
+
+  Returns a human-readable status string.
+  """
+  # Resolve scenario path
+  if os.path.sep in scenario_arg or scenario_arg.endswith(".json"):
+    scenario_path = scenario_arg
+  else:
+    scenario_path = os.path.join(_SCENARIOS_DIR, f"{scenario_arg}.json")
+
+  if not os.path.isfile(scenario_path):
+    return f"ERROR: Scenario file not found: {scenario_path}"
+
+  with open(scenario_path) as f:
+    scenario = json.load(f)
+
+  sim_folder = f"{fs_storage}/{new_sim_name}"
+  if os.path.exists(sim_folder):
+    return (f"ERROR: Simulation folder already exists: {sim_folder}\n"
+            "Choose a different name or delete the existing folder first.")
+
+  arena_name   = scenario["arena"]
+  start_date   = scenario["start_date"]
+  sec_per_step = scenario.get("sec_per_step", 10)
+  agents       = scenario["agents"]
+
+  arena_config_path = os.path.join(_ARENAS_DIR, arena_name, "config.json")
+  if not os.path.isfile(arena_config_path):
+    return f"ERROR: Arena config not found: {arena_config_path}"
+  with open(arena_config_path) as f:
+    arena_config = json.load(f)
+  maze_name = arena_config["maze_name"]
+
+  # Build directory skeleton
+  os.makedirs(os.path.join(sim_folder, "reverie"))
+  os.makedirs(os.path.join(sim_folder, "environment"))
+  os.makedirs(os.path.join(sim_folder, "movement"))
+
+  # reverie/meta.json
+  persona_names = [a["template"] for a in agents]
+  meta = {
+    "fork_sim_code": new_sim_name,
+    "start_date": start_date,
+    "curr_time": f"{start_date}, 00:00:00",
+    "sec_per_step": sec_per_step,
+    "maze_name": maze_name,
+    "persona_names": persona_names,
+    "step": 0,
+  }
+  with open(os.path.join(sim_folder, "reverie", "meta.json"), "w") as f:
+    json.dump(meta, f, indent=2)
+
+  # environment/0.json
+  env_0 = {}
+  for entry in agents:
+    name  = entry["template"]
+    spawn = entry.get("spawn",
+                      arena_config["default_spawn_points"]["default"])
+    env_0[name] = {"maze": maze_name, "x": spawn[0], "y": spawn[1]}
+  with open(os.path.join(sim_folder, "environment", "0.json"), "w") as f:
+    json.dump(env_0, f, indent=2)
+
+  # personas/<Name>/bootstrap_memory/
+  for entry in agents:
+    name         = entry["template"]
+    template_dir = os.path.join(_AGENT_TEMPLATES_DIR, name)
+    if not os.path.isdir(template_dir):
+      shutil.rmtree(sim_folder)
+      return f"ERROR: Agent template not found: {template_dir}"
+
+    bootstrap_dir = os.path.join(
+      sim_folder, "personas", name, "bootstrap_memory")
+    os.makedirs(bootstrap_dir)
+
+    scratch_tmpl_path = os.path.join(template_dir, "scratch_template.json")
+    with open(scratch_tmpl_path) as f:
+      tmpl = json.load(f)
+    scratch = _build_scratch_from_template(tmpl)
+    with open(os.path.join(bootstrap_dir, "scratch.json"), "w") as f:
+      json.dump(scratch, f, indent=2)
+
+    shutil.copy(
+      os.path.join(template_dir, "spatial_memory.json"),
+      os.path.join(bootstrap_dir, "spatial_memory.json"))
+    shutil.copytree(
+      os.path.join(template_dir, "associative_memory"),
+      os.path.join(bootstrap_dir, "associative_memory"))
+
+  return (f"Simulation '{new_sim_name}' created at:\n  {sim_folder}\n"
+          f"Fork it from '{new_sim_name}' when starting reverie.py.")
+
 ##############################################################################
 #                                  REVERIE                                   #
 ##############################################################################
@@ -589,6 +749,46 @@ class ReverieServer:
               clean_whispers += [[agent_name, whisper]]
 
           load_history_via_whisper(self.personas, clean_whispers)
+
+        elif sim_command.lower() == "list agents":
+          # Print all agent templates available in the agent_templates dir.
+          # Ex: list agents
+          templates = _list_agent_templates()
+          if templates:
+            ret_str += "Available agent templates:\n"
+            for t in templates:
+              ret_str += f"  {t}\n"
+          else:
+            ret_str += f"No agent templates found in:\n  {_AGENT_TEMPLATES_DIR}\n"
+
+        elif sim_command.lower() == "list arenas":
+          # Print all arenas that have a config.json in the arenas dir.
+          # Ex: list arenas
+          arenas = _list_arenas()
+          if arenas:
+            ret_str += "Available arenas:\n"
+            for a in arenas:
+              cfg_path = os.path.join(_ARENAS_DIR, a, "config.json")
+              with open(cfg_path) as _f:
+                cfg = json.load(_f)
+              display = cfg.get("display_name", a)
+              ret_str += f"  {a}  ({display})\n"
+          else:
+            ret_str += f"No arenas found in:\n  {_ARENAS_DIR}\n"
+
+        elif sim_command[:10].lower() == "create sim":
+          # Create a new simulation from a scenario definition.
+          # Ex: create sim base_the_ville_isabella_maria_klaus my_new_sim
+          parts = sim_command.split()
+          if len(parts) < 4:
+            ret_str += ("Usage: create sim <scenario_name> <new_sim_name>\n"
+                        "  scenario_name : name in assets/scenarios/ "
+                        "(without .json), or a file path\n"
+                        "  new_sim_name  : name for the new simulation folder")
+          else:
+            scenario_arg = parts[2]
+            new_sim_name = parts[3]
+            ret_str += create_sim_from_scenario(scenario_arg, new_sim_name)
 
         print (ret_str)
 
