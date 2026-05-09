@@ -138,6 +138,32 @@ def generate_hourly_schedule(persona, wake_up_hour):
   return n_m1_hourly_compressed
 
 
+def build_default_daily_schedule(wake_up_hour):
+  schedule = []
+  if wake_up_hour > 0:
+    schedule += [["sleeping", wake_up_hour * 60]]
+
+  schedule += [
+    ["waking up and starting the morning routine", 60],
+    ["having breakfast", 60],
+    ["working", 180],
+    ["having lunch", 60],
+    ["working", 240],
+    ["having dinner", 60],
+    ["relaxing at home", 120],
+    ["getting ready for bed", 60],
+  ]
+
+  planned_minutes = sum(duration for _, duration in schedule)
+  if planned_minutes < 1440:
+    schedule += [["sleeping", 1440 - planned_minutes]]
+  elif planned_minutes > 1440:
+    overflow = planned_minutes - 1440
+    schedule[-1][1] = max(1, schedule[-1][1] - overflow)
+
+  return schedule
+
+
 def generate_task_decomp(persona, task, duration): 
   """
   A few shot decomposition of a task given the task description 
@@ -164,6 +190,21 @@ def generate_task_decomp(persona, task, duration):
   return run_gpt_prompt_task_decomp(persona, task, duration)[0]
 
 
+def _pick_valid_option(choice, options, default=None):
+  if not options:
+    return default
+  if choice in options:
+    return choice
+
+  lowered = {option.lower(): option for option in options}
+  if isinstance(choice, str) and choice.lower() in lowered:
+    return lowered[choice.lower()]
+
+  if default in options:
+    return default
+  return options[0]
+
+
 def generate_action_sector(act_desp, persona, maze): 
   """TODO 
   Given the persona and the task description, choose the action_sector. 
@@ -179,7 +220,11 @@ def generate_action_sector(act_desp, persona, maze):
     "bedroom 2"
   """
   if debug: print ("GNS FUNCTION: <generate_action_sector>")
-  return run_gpt_prompt_action_sector(act_desp, persona, maze)[0]
+  curr_world = maze.access_tile(persona.scratch.curr_tile)["world"]
+  curr_sector = maze.access_tile(persona.scratch.curr_tile)["sector"]
+  options = list(persona.s_mem.tree.get(curr_world, {}).keys())
+  choice = run_gpt_prompt_action_sector(act_desp, persona, maze)[0]
+  return _pick_valid_option(choice, options, curr_sector)
 
 
 def generate_action_arena(act_desp, persona, maze, act_world, act_sector): 
@@ -197,7 +242,11 @@ def generate_action_arena(act_desp, persona, maze, act_world, act_sector):
     "bedroom 2"
   """
   if debug: print ("GNS FUNCTION: <generate_action_arena>")
-  return run_gpt_prompt_action_arena(act_desp, persona, maze, act_world, act_sector)[0]
+  curr_tile_details = maze.access_tile(persona.scratch.curr_tile)
+  curr_arena = curr_tile_details["arena"]
+  options = list(persona.s_mem.tree.get(act_world, {}).get(act_sector, {}).keys())
+  choice = run_gpt_prompt_action_arena(act_desp, persona, maze, act_world, act_sector)[0]
+  return _pick_valid_option(choice, options, curr_arena)
 
 
 def generate_action_game_object(act_desp, act_address, persona, maze):
@@ -218,9 +267,14 @@ def generate_action_game_object(act_desp, act_address, persona, maze):
     "bed"
   """
   if debug: print ("GNS FUNCTION: <generate_action_game_object>")
-  if not persona.s_mem.get_str_accessible_arena_game_objects(act_address): 
+  curr_world, curr_sector, curr_arena = act_address.split(":")
+  arena_objects = persona.s_mem.tree.get(curr_world, {}).get(curr_sector, {}).get(curr_arena, None)
+  if arena_objects is None:
+    arena_objects = persona.s_mem.tree.get(curr_world, {}).get(curr_sector, {}).get(curr_arena.lower(), None)
+  if not arena_objects:
     return "<random>"
-  return run_gpt_prompt_action_game_object(act_desp, persona, maze, act_address)[0]
+  choice = run_gpt_prompt_action_game_object(act_desp, persona, maze, act_address)[0]
+  return _pick_valid_option(choice, list(arena_objects), list(arena_objects)[0])
 
 
 def generate_action_pronunciatio(act_desp, persona): 
@@ -261,17 +315,35 @@ def generate_action_event_triple(act_desp, persona):
     "🧈🍞"
   """
   if debug: print ("GNS FUNCTION: <generate_action_event_triple>")
-  return run_gpt_prompt_event_triple(act_desp, persona)[0]
+  try:
+    event = run_gpt_prompt_event_triple(act_desp, persona)[0]
+    if isinstance(event, (list, tuple)) and len(event) == 3:
+      return tuple(event)
+  except:
+    pass
+  return (persona.name, "is", act_desp)
 
 
 def generate_act_obj_desc(act_game_object, act_desp, persona): 
   if debug: print ("GNS FUNCTION: <generate_act_obj_desc>")
-  return run_gpt_prompt_act_obj_desc(act_game_object, act_desp, persona)[0]
+  try:
+    output = run_gpt_prompt_act_obj_desc(act_game_object, act_desp, persona)[0]
+    if output:
+      return output
+  except:
+    pass
+  return f"{act_game_object} is being used for {act_desp}"
 
 
 def generate_act_obj_event_triple(act_game_object, act_obj_desc, persona): 
   if debug: print ("GNS FUNCTION: <generate_act_obj_event_triple>")
-  return run_gpt_prompt_act_obj_event_triple(act_game_object, act_obj_desc, persona)[0]
+  try:
+    event = run_gpt_prompt_act_obj_event_triple(act_game_object, act_obj_desc, persona)[0]
+    if isinstance(event, (list, tuple)) and len(event) == 3:
+      return tuple(event)
+  except:
+    pass
+  return (act_game_object, "is", act_obj_desc)
 
 
 def generate_convo(maze, init_persona, target_persona): 
@@ -493,6 +565,18 @@ def _long_term_planning(persona, new_day):
   # add up to 24 hours.
   persona.scratch.f_daily_schedule = generate_hourly_schedule(persona, 
                                                               wake_up_hour)
+  if not persona.scratch.daily_req:
+    persona.scratch.daily_req = [
+      "wake up and complete the morning routine",
+      "have meals throughout the day",
+      "work on the main daily tasks",
+      "relax at home in the evening",
+      "go to bed for the night",
+    ]
+  if not persona.scratch.f_daily_schedule:
+    persona.scratch.f_daily_schedule = build_default_daily_schedule(
+      wake_up_hour
+    )
   persona.scratch.f_daily_schedule_hourly_org = (persona.scratch
                                                    .f_daily_schedule[:])
 

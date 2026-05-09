@@ -21,6 +21,7 @@ openai.api_key = openai_api_key
 DEFAULT_CHAT_MODEL = os.getenv("OPENAI_CHAT_MODEL", "gpt-3.5-turbo")
 DEFAULT_EMBEDDING_MODEL = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-ada-002")
 TEXTGEN_MODEL_URL = os.getenv("TEXTGEN_MODEL_URL", "https://fotos-sand-avi-cloth.trycloudflare.com")
+ENABLE_TEXTGEN_FALLBACK = os.getenv("ENABLE_TEXTGEN_FALLBACK", "").lower() in {"1", "true", "yes", "on"}
 
 _textgen_llm = None
 _embedding_model = None
@@ -62,6 +63,8 @@ def _get_embedding_model():
 
 
 def _request_with_textgen(prompt):
+  if not ENABLE_TEXTGEN_FALLBACK:
+    return ""
   prompt_format = f"""### Instruction:
   {prompt}
 
