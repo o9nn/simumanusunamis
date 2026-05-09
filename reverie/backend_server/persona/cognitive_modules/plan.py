@@ -191,6 +191,7 @@ def generate_task_decomp(persona, task, duration):
 
 
 def _pick_valid_option(choice, options, default=None):
+  """Return a valid option using exact or case-insensitive matching with fallback."""
   if not options:
     return default
   if choice in options:

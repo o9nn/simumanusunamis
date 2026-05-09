@@ -28,7 +28,7 @@ _embedding_model = None
 
 
 def _has_openai_key():
-  return bool(openai_api_key and "<Your OpenAI API>" not in openai_api_key)
+  return bool(openai_api_key and not openai_api_key.startswith("<"))
 
 
 def _get_textgen_llm():
@@ -45,6 +45,7 @@ def _get_textgen_llm():
 
 
 def _get_embedding_model():
+  """Lazily initialize the local embedding model for non-OpenAI fallback runs."""
   global _embedding_model
   if _embedding_model is not None:
     return _embedding_model
@@ -52,6 +53,7 @@ def _get_embedding_model():
   from langchain.embeddings import HuggingFaceBgeEmbeddings
 
   model_name = os.getenv("REVERIE_EMBEDDING_MODEL", "BAAI/bge-small-en")
+  # CPU is the safest default in this runner; callers can override it via env.
   model_kwargs = {"device": os.getenv("REVERIE_EMBEDDING_DEVICE", "cpu")}
   encode_kwargs = {"normalize_embeddings": True}
   _embedding_model = HuggingFaceBgeEmbeddings(
@@ -77,6 +79,7 @@ def _request_with_textgen(prompt):
 
 
 def _deterministic_embedding(text, width=32):
+  """Return a stable but non-semantic embedding fallback when no model is available."""
   digest = hashlib.sha256(text.encode("utf-8")).digest()
   values = []
   while len(values) < width:
