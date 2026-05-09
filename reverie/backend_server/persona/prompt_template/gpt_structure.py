@@ -67,7 +67,10 @@ def _request_with_textgen(prompt):
 
   ### Response:
   """
-  return _get_textgen_llm()(prompt_format)
+  try:
+    return _get_textgen_llm()(prompt_format)
+  except Exception:
+    return ""
 
 
 def _deterministic_embedding(text, width=32):
@@ -87,11 +90,14 @@ def temp_sleep(seconds=0.1):
 def ChatGPT_single_request(prompt): 
   temp_sleep()
   if _has_openai_key():
-    completion = openai.ChatCompletion.create(
-      model=DEFAULT_CHAT_MODEL,
-      messages=[{"role": "user", "content": prompt}],
-    )
-    return completion["choices"][0]["message"]["content"]
+    try:
+      completion = openai.ChatCompletion.create(
+        model=DEFAULT_CHAT_MODEL,
+        messages=[{"role": "user", "content": prompt}],
+      )
+      return completion["choices"][0]["message"]["content"]
+    except Exception:
+      return ""
   return _request_with_textgen(prompt)
 
 
@@ -113,11 +119,14 @@ def GPT4_request(prompt):
   """
   temp_sleep()
   if _has_openai_key():
-    completion = openai.ChatCompletion.create(
-      model=os.getenv("OPENAI_GPT4_MODEL", DEFAULT_CHAT_MODEL),
-      messages=[{"role": "user", "content": prompt}],
-    )
-    return completion["choices"][0]["message"]["content"]
+    try:
+      completion = openai.ChatCompletion.create(
+        model=os.getenv("OPENAI_GPT4_MODEL", DEFAULT_CHAT_MODEL),
+        messages=[{"role": "user", "content": prompt}],
+      )
+      return completion["choices"][0]["message"]["content"]
+    except Exception:
+      return ""
   return _request_with_textgen(prompt)
 
 
@@ -134,11 +143,14 @@ def ChatGPT_request(prompt):
     a str of GPT-3's response. 
   """
   if _has_openai_key():
-    completion = openai.ChatCompletion.create(
-      model=DEFAULT_CHAT_MODEL,
-      messages=[{"role": "user", "content": prompt}],
-    )
-    return completion["choices"][0]["message"]["content"]
+    try:
+      completion = openai.ChatCompletion.create(
+        model=DEFAULT_CHAT_MODEL,
+        messages=[{"role": "user", "content": prompt}],
+      )
+      return completion["choices"][0]["message"]["content"]
+    except Exception:
+      return ""
   return _request_with_textgen(prompt)
 
 def GPT4_safe_generate_response(prompt, 
@@ -268,14 +280,17 @@ def GPT_request(prompt, gpt_parameter):
   """
   temp_sleep()
   if _has_openai_key():
-    request_kwargs = dict(gpt_parameter)
-    engine = request_kwargs.pop("engine", None) or request_kwargs.pop("model", None)
-    completion = openai.Completion.create(
-      engine=engine or "text-davinci-003",
-      prompt=prompt,
-      **request_kwargs,
-    )
-    return completion["choices"][0]["text"]
+    try:
+      request_kwargs = dict(gpt_parameter)
+      engine = request_kwargs.pop("engine", None) or request_kwargs.pop("model", None)
+      completion = openai.Completion.create(
+        engine=engine or "text-davinci-003",
+        prompt=prompt,
+        **request_kwargs,
+      )
+      return completion["choices"][0]["text"]
+    except Exception:
+      return ""
   return _request_with_textgen(prompt)
 
 
@@ -333,11 +348,14 @@ def get_embedding(text, model="BAAI/bge-large-en"):
   if not text: 
     text = "this is blank"
   if _has_openai_key():
-    response = openai.Embedding.create(
-      input=[text],
-      model=os.getenv("OPENAI_EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL),
-    )
-    return response["data"][0]["embedding"]
+    try:
+      response = openai.Embedding.create(
+        input=[text],
+        model=os.getenv("OPENAI_EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL),
+      )
+      return response["data"][0]["embedding"]
+    except Exception:
+      pass
   try:
     return _get_embedding_model().embed_query(text)
   except Exception:
