@@ -74,7 +74,9 @@ def _request_with_textgen(prompt):
   """
   try:
     return _get_textgen_llm()(prompt_format)
-  except Exception:
+  except Exception as exc:
+    if debug:
+      print(f"TextGen fallback request failed: {exc}")
     return ""
 
 
@@ -102,7 +104,9 @@ def ChatGPT_single_request(prompt):
         messages=[{"role": "user", "content": prompt}],
       )
       return completion["choices"][0]["message"]["content"]
-    except Exception:
+    except Exception as exc:
+      if debug:
+        print(f"ChatGPT_single_request failed: {exc}")
       return ""
   return _request_with_textgen(prompt)
 
@@ -131,7 +135,9 @@ def GPT4_request(prompt):
         messages=[{"role": "user", "content": prompt}],
       )
       return completion["choices"][0]["message"]["content"]
-    except Exception:
+    except Exception as exc:
+      if debug:
+        print(f"GPT4_request failed: {exc}")
       return ""
   return _request_with_textgen(prompt)
 
@@ -155,7 +161,9 @@ def ChatGPT_request(prompt):
         messages=[{"role": "user", "content": prompt}],
       )
       return completion["choices"][0]["message"]["content"]
-    except Exception:
+    except Exception as exc:
+      if debug:
+        print(f"ChatGPT_request failed: {exc}")
       return ""
   return _request_with_textgen(prompt)
 
@@ -295,7 +303,9 @@ def GPT_request(prompt, gpt_parameter):
         **request_kwargs,
       )
       return completion["choices"][0]["text"]
-    except Exception:
+    except Exception as exc:
+      if debug:
+        print(f"GPT_request failed: {exc}")
       return ""
   return _request_with_textgen(prompt)
 
@@ -360,11 +370,14 @@ def get_embedding(text, model="BAAI/bge-large-en"):
         model=DEFAULT_EMBEDDING_MODEL,
       )
       return response["data"][0]["embedding"]
-    except Exception:
-      pass
+    except Exception as exc:
+      if debug:
+        print(f"OpenAI embedding request failed: {exc}")
   try:
     return _get_embedding_model().embed_query(text)
-  except Exception:
+  except Exception as exc:
+    if debug:
+      print(f"Local embedding model failed: {exc}")
     return _deterministic_embedding(text)
 
 
