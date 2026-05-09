@@ -354,7 +354,7 @@ def get_embedding(text, model="BAAI/bge-large-en"):
     try:
       response = openai.Embedding.create(
         input=[text],
-        model=os.getenv("OPENAI_EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL),
+        model=DEFAULT_EMBEDDING_MODEL,
       )
       return response["data"][0]["embedding"]
     except Exception:

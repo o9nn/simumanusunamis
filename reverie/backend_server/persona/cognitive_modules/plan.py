@@ -319,7 +319,7 @@ def generate_action_event_triple(act_desp, persona):
     event = run_gpt_prompt_event_triple(act_desp, persona)[0]
     if isinstance(event, (list, tuple)) and len(event) == 3:
       return tuple(event)
-  except:
+  except Exception:
     pass
   return (persona.name, "is", act_desp)
 
@@ -330,7 +330,7 @@ def generate_act_obj_desc(act_game_object, act_desp, persona):
     output = run_gpt_prompt_act_obj_desc(act_game_object, act_desp, persona)[0]
     if output:
       return output
-  except:
+  except Exception:
     pass
   return f"{act_game_object} is being used for {act_desp}"
 
@@ -341,7 +341,7 @@ def generate_act_obj_event_triple(act_game_object, act_obj_desc, persona):
     event = run_gpt_prompt_act_obj_event_triple(act_game_object, act_obj_desc, persona)[0]
     if isinstance(event, (list, tuple)) and len(event) == 3:
       return tuple(event)
-  except:
+  except Exception:
     pass
   return (act_game_object, "is", act_obj_desc)
 
