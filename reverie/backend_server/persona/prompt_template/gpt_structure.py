@@ -3,41 +3,112 @@ Author: Joon Sung Park (joonspk@stanford.edu)
 Fork Author: Poppy (stupiddumbcat on Discord)
 
 File: gpt_structure.py
-Description: Wrapper functions for calling local model APIs. 
-Allows for running local models using the TextGen (Oobabooga TextGen) wrapper. Easily changeable to use the KoboldAIApi wrapper.
+Description: Wrapper functions for calling OpenAI APIs with an optional local
+TextGen fallback.
 """
+import hashlib
 import json
+import os
 import random
-import langchain
-from langchain.llms import TextGen
-from langchain.embeddings import HuggingFaceBgeEmbeddings
 import time
+
+import openai
 
 from utils import *
 
-model_name = "BAAI/bge-small-en"
-model_kwargs = {'device': 'cuda'}
-encode_kwargs = {'normalize_embeddings': True} # set True to compute cosine similarity
-model_norm = HuggingFaceBgeEmbeddings(
+openai.api_key = openai_api_key
+
+DEFAULT_CHAT_MODEL = os.getenv("OPENAI_CHAT_MODEL", "gpt-3.5-turbo")
+DEFAULT_EMBEDDING_MODEL = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-ada-002")
+TEXTGEN_MODEL_URL = os.getenv("TEXTGEN_MODEL_URL", "https://fotos-sand-avi-cloth.trycloudflare.com")
+ENABLE_TEXTGEN_FALLBACK = os.getenv("ENABLE_TEXTGEN_FALLBACK", "").lower() in {"1", "true", "yes", "on"}
+
+_textgen_llm = None
+_embedding_model = None
+
+
+def _has_openai_key():
+  return bool(openai_api_key and not openai_api_key.startswith("<"))
+
+
+def _get_textgen_llm():
+  global _textgen_llm
+  if _textgen_llm is not None:
+    return _textgen_llm
+
+  from langchain.llms import TextGen
+
+  _textgen_llm = TextGen(model_url=TEXTGEN_MODEL_URL,
+                         max_context_length=2048,
+                         max_length=100)
+  return _textgen_llm
+
+
+def _get_embedding_model():
+  """Lazily initialize the local embedding model for non-OpenAI fallback runs."""
+  global _embedding_model
+  if _embedding_model is not None:
+    return _embedding_model
+
+  from langchain.embeddings import HuggingFaceBgeEmbeddings
+
+  model_name = os.getenv("REVERIE_EMBEDDING_MODEL", "BAAI/bge-small-en")
+  # CPU is the safest default in this runner; callers can override it via env.
+  model_kwargs = {"device": os.getenv("REVERIE_EMBEDDING_DEVICE", "cpu")}
+  encode_kwargs = {"normalize_embeddings": True}
+  _embedding_model = HuggingFaceBgeEmbeddings(
     model_name=model_name,
     model_kwargs=model_kwargs,
-    encode_kwargs=encode_kwargs
-)
+    encode_kwargs=encode_kwargs,
+  )
+  return _embedding_model
 
-llm = TextGen(model_url='https://fotos-sand-avi-cloth.trycloudflare.com', max_context_length=2048, max_length=100)
+
+def _request_with_textgen(prompt):
+  if not ENABLE_TEXTGEN_FALLBACK:
+    return ""
+  prompt_format = f"""### Instruction:
+  {prompt}
+
+  ### Response:
+  """
+  try:
+    return _get_textgen_llm()(prompt_format)
+  except Exception as exc:
+    if debug:
+      print(f"TextGen fallback request failed: {exc}")
+    return ""
+
+
+def _deterministic_embedding(text, width=32):
+  """Return a stable but non-semantic embedding fallback when no model is available."""
+  digest = hashlib.sha256(text.encode("utf-8")).digest()
+  values = []
+  while len(values) < width:
+    for byte in digest:
+      values.append((byte / 255.0) * 2 - 1)
+      if len(values) == width:
+        break
+    digest = hashlib.sha256(digest).digest()
+  return values
 
 def temp_sleep(seconds=0.1):
   time.sleep(seconds)
 
 def ChatGPT_single_request(prompt): 
   temp_sleep()
-  prompt_format = f'''### Instruction:
-  {prompt}
-
-  ### Response:
-  '''
-  completion = llm(prompt_format)
-  return completion
+  if _has_openai_key():
+    try:
+      completion = openai.ChatCompletion.create(
+        model=DEFAULT_CHAT_MODEL,
+        messages=[{"role": "user", "content": prompt}],
+      )
+      return completion["choices"][0]["message"]["content"]
+    except Exception as exc:
+      if debug:
+        print(f"ChatGPT_single_request failed: {exc}")
+      return ""
+  return _request_with_textgen(prompt)
 
 
 # ============================================================================
@@ -57,13 +128,18 @@ def GPT4_request(prompt):
     a str of GPT-3's response. 
   """
   temp_sleep()
-  prompt_format = f'''### Instruction:
-  {prompt}
-
-  ### Response:
-  '''
-  completion = llm(prompt_format)
-  return completion
+  if _has_openai_key():
+    try:
+      completion = openai.ChatCompletion.create(
+        model=os.getenv("OPENAI_GPT4_MODEL", DEFAULT_CHAT_MODEL),
+        messages=[{"role": "user", "content": prompt}],
+      )
+      return completion["choices"][0]["message"]["content"]
+    except Exception as exc:
+      if debug:
+        print(f"GPT4_request failed: {exc}")
+      return ""
+  return _request_with_textgen(prompt)
 
 
 def ChatGPT_request(prompt): 
@@ -78,14 +154,18 @@ def ChatGPT_request(prompt):
   RETURNS: 
     a str of GPT-3's response. 
   """
-  # temp_sleep()
-  prompt_format = f'''### Instruction:
-  {prompt}
-
-  ### Response:
-  '''
-  completion = llm(prompt_format)
-  return completion
+  if _has_openai_key():
+    try:
+      completion = openai.ChatCompletion.create(
+        model=DEFAULT_CHAT_MODEL,
+        messages=[{"role": "user", "content": prompt}],
+      )
+      return completion["choices"][0]["message"]["content"]
+    except Exception as exc:
+      if debug:
+        print(f"ChatGPT_request failed: {exc}")
+      return ""
+  return _request_with_textgen(prompt)
 
 def GPT4_safe_generate_response(prompt, 
                                    example_output,
@@ -213,25 +293,21 @@ def GPT_request(prompt, gpt_parameter):
     a str of GPT-3's response. 
   """
   temp_sleep()
-  """
-  Given a prompt and a dictionary of GPT parameters, make a request to OpenAI
-  server and returns the response. 
-  ARGS:
-    prompt: a str prompt
-    gpt_parameter: a python dictionary with the keys indicating the names of  
-                   the parameter and the values indicating the parameter 
-                   values.   
-  RETURNS: 
-    a str of GPT-3's response. 
-  """
-  # temp_sleep()
-  prompt_format = f'''### Instruction:
-  {prompt}
-
-  ### Response:
-  '''
-  completion = llm(prompt_format)
-  return completion
+  if _has_openai_key():
+    try:
+      request_kwargs = dict(gpt_parameter)
+      engine = request_kwargs.pop("engine", None) or request_kwargs.pop("model", None)
+      completion = openai.Completion.create(
+        engine=engine or "text-davinci-003",
+        prompt=prompt,
+        **request_kwargs,
+      )
+      return completion["choices"][0]["text"]
+    except Exception as exc:
+      if debug:
+        print(f"GPT_request failed: {exc}")
+      return ""
+  return _request_with_textgen(prompt)
 
 
 def generate_prompt(curr_input, prompt_lib_file): 
@@ -287,8 +363,22 @@ def get_embedding(text, model="BAAI/bge-large-en"):
   text = text.replace("\n", " ")
   if not text: 
     text = "this is blank"
-    embeddedings = embeddings_model.embed_query(text)
-    return embeddings
+  if _has_openai_key():
+    try:
+      response = openai.Embedding.create(
+        input=[text],
+        model=DEFAULT_EMBEDDING_MODEL,
+      )
+      return response["data"][0]["embedding"]
+    except Exception as exc:
+      if debug:
+        print(f"OpenAI embedding request failed: {exc}")
+  try:
+    return _get_embedding_model().embed_query(text)
+  except Exception as exc:
+    if debug:
+      print(f"Local embedding model failed: {exc}")
+    return _deterministic_embedding(text)
 
 
 if __name__ == '__main__':
