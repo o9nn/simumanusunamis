@@ -15,6 +15,7 @@ Endpoints:
 """
 import json
 import os
+import re
 import datetime
 from functools import wraps
 
@@ -24,6 +25,86 @@ from django.views.decorators.csrf import csrf_exempt
 from django.conf import settings
 
 from global_methods import check_if_file_exists, find_filenames
+
+
+# =============================================================================
+# Security: Path Sanitization
+# =============================================================================
+
+def sanitize_path_component(value):
+    """
+    Sanitize a path component to prevent path traversal attacks.
+    
+    Removes or replaces dangerous characters and patterns:
+    - Path separators (/, backslash)
+    - Parent directory references (..)
+    - Null bytes
+    - Other dangerous characters
+    
+    Returns sanitized string safe for use in file paths.
+    """
+    if not value:
+        return ""
+    
+    # Convert to string and strip whitespace
+    value = str(value).strip()
+    
+    # Remove null bytes
+    value = value.replace('\x00', '')
+    
+    # Remove path separators and parent directory references
+    value = value.replace('/', '').replace('\\', '')
+    value = value.replace('..', '')
+    
+    # Only allow safe characters: alphanumeric, space, underscore, hyphen
+    value = re.sub(r'[^a-zA-Z0-9\s_-]', '', value)
+    
+    return value
+
+
+def validate_simulation_code(sim_code):
+    """
+    Validate that a simulation code exists and is safe.
+    Returns sanitized sim_code if valid, None otherwise.
+    """
+    if not sim_code:
+        return None
+    
+    sanitized = sanitize_path_component(sim_code)
+    if not sanitized:
+        return None
+    
+    # Check that simulation exists
+    storage_path = os.path.join("storage", sanitized)
+    if not os.path.isdir(storage_path):
+        return None
+    
+    return sanitized
+
+
+def validate_persona_name(sim_code, persona_name):
+    """
+    Validate that a persona exists in the simulation.
+    Returns sanitized persona name if valid, None otherwise.
+    """
+    if not sim_code or not persona_name:
+        return None
+    
+    sanitized_sim = sanitize_path_component(sim_code)
+    sanitized_name = sanitize_path_component(persona_name)
+    
+    if not sanitized_sim or not sanitized_name:
+        return None
+    
+    # Handle underscore vs space in name
+    persona_name_clean = sanitized_name.replace("_", " ")
+    
+    # Check that persona exists
+    persona_path = os.path.join("storage", sanitized_sim, "personas", persona_name_clean)
+    if not os.path.isdir(persona_path):
+        return None
+    
+    return persona_name_clean
 
 
 # =============================================================================
@@ -76,14 +157,24 @@ def get_current_simulation():
     
     with open(sim_code_file) as f:
         data = json.load(f)
-        return data.get('sim_code'), data.get('step', 0)
+        sim_code = data.get('sim_code')
+        # Validate the simulation code from config
+        if sim_code:
+            sim_code = validate_simulation_code(sim_code)
+        return sim_code, data.get('step', 0)
 
 
 def load_persona_state(sim_code, persona_name):
     """Load the full state of a persona from storage."""
-    # Handle underscore vs space in name
-    persona_name_clean = persona_name.replace("_", " ")
-    memory_path = f"storage/{sim_code}/personas/{persona_name_clean}/bootstrap_memory"
+    # Validate and sanitize inputs
+    sanitized_sim = sanitize_path_component(sim_code)
+    persona_name_clean = validate_persona_name(sim_code, persona_name)
+    
+    if not sanitized_sim or not persona_name_clean:
+        return None
+    
+    memory_path = os.path.join("storage", sanitized_sim, "personas", 
+                               persona_name_clean, "bootstrap_memory")
     
     if not os.path.exists(memory_path):
         return None
@@ -91,19 +182,19 @@ def load_persona_state(sim_code, persona_name):
     state = {}
     
     # Load scratch (short-term state)
-    scratch_path = f"{memory_path}/scratch.json"
+    scratch_path = os.path.join(memory_path, "scratch.json")
     if os.path.exists(scratch_path):
         with open(scratch_path) as f:
             state['scratch'] = json.load(f)
     
     # Load spatial memory
-    spatial_path = f"{memory_path}/spatial_memory.json"
+    spatial_path = os.path.join(memory_path, "spatial_memory.json")
     if os.path.exists(spatial_path):
         with open(spatial_path) as f:
             state['spatial_memory'] = json.load(f)
     
     # Load associative memory
-    assoc_path = f"{memory_path}/associative_memory/nodes.json"
+    assoc_path = os.path.join(memory_path, "associative_memory", "nodes.json")
     if os.path.exists(assoc_path):
         with open(assoc_path) as f:
             state['associative_memory'] = json.load(f)
@@ -136,15 +227,16 @@ def api_simulation_status(request):
             'detail': 'No active simulation. Start the backend server first.'
         })
     
-    # Get simulation metadata
-    meta_path = f"storage/{sim_code}/reverie/meta.json"
+    # Get simulation metadata (sim_code is already validated by get_current_simulation)
+    sanitized_sim = sanitize_path_component(sim_code)
+    meta_path = os.path.join("storage", sanitized_sim, "reverie", "meta.json")
     meta = {}
     if os.path.exists(meta_path):
         with open(meta_path) as f:
             meta = json.load(f)
     
     # Count agents
-    persona_path = f"storage/{sim_code}/personas"
+    persona_path = os.path.join("storage", sanitized_sim, "personas")
     agent_count = 0
     if os.path.exists(persona_path):
         agent_count = len([d for d in os.listdir(persona_path) 
@@ -180,15 +272,17 @@ def api_list_agents(request):
             'agents': []
         }, status=404)
     
+    sanitized_sim = sanitize_path_component(sim_code)
+    
     # Get current positions
-    env_path = f"storage/{sim_code}/environment/{step}.json"
+    env_path = os.path.join("storage", sanitized_sim, "environment", f"{step}.json")
     positions = {}
     if os.path.exists(env_path):
         with open(env_path) as f:
             positions = json.load(f)
     
     agents = []
-    persona_path = f"storage/{sim_code}/personas"
+    persona_path = os.path.join("storage", sanitized_sim, "personas")
     
     if os.path.exists(persona_path):
         for name in os.listdir(persona_path):
@@ -205,7 +299,7 @@ def api_list_agents(request):
             }
             
             # Load scratch for basic info
-            scratch_path = f"{full_path}/bootstrap_memory/scratch.json"
+            scratch_path = os.path.join(full_path, "bootstrap_memory", "scratch.json")
             if os.path.exists(scratch_path):
                 with open(scratch_path) as f:
                     scratch = json.load(f)
@@ -245,6 +339,13 @@ def api_agent_state(request, agent_name):
     if not sim_code:
         return JsonResponse({'error': 'No active simulation'}, status=404)
     
+    # Validate agent name
+    validated_name = validate_persona_name(sim_code, agent_name)
+    if not validated_name:
+        return JsonResponse({
+            'error': f'Agent not found: {agent_name}'
+        }, status=404)
+    
     state = load_persona_state(sim_code, agent_name)
     
     if not state:
@@ -253,15 +354,15 @@ def api_agent_state(request, agent_name):
         }, status=404)
     
     scratch = state.get('scratch', {})
+    sanitized_sim = sanitize_path_component(sim_code)
     
     # Get current position
-    env_path = f"storage/{sim_code}/environment/{step}.json"
+    env_path = os.path.join("storage", sanitized_sim, "environment", f"{step}.json")
     position = {}
     if os.path.exists(env_path):
         with open(env_path) as f:
             env = json.load(f)
-            name_clean = agent_name.replace('_', ' ')
-            position = env.get(name_clean, {})
+            position = env.get(validated_name, {})
     
     # Count memory items
     assoc = state.get('associative_memory', {})
@@ -270,7 +371,7 @@ def api_agent_state(request, agent_name):
     chat_count = sum(1 for n in assoc.values() if n.get('type') == 'chat')
     
     return JsonResponse({
-        'name': agent_name.replace('_', ' '),
+        'name': validated_name,
         'position': position,
         'identity': {
             'first_name': scratch.get('first_name'),
@@ -324,6 +425,13 @@ def api_agent_memory(request, agent_name):
     if not sim_code:
         return JsonResponse({'error': 'No active simulation'}, status=404)
     
+    # Validate agent name
+    validated_name = validate_persona_name(sim_code, agent_name)
+    if not validated_name:
+        return JsonResponse({
+            'error': f'Agent not found: {agent_name}'
+        }, status=404)
+    
     state = load_persona_state(sim_code, agent_name)
     
     if not state:
@@ -333,7 +441,10 @@ def api_agent_memory(request, agent_name):
     
     # Get query parameters
     memory_type = request.GET.get('type')
-    limit = int(request.GET.get('limit', 50))
+    try:
+        limit = min(int(request.GET.get('limit', 50)), 500)  # Cap at 500
+    except ValueError:
+        limit = 50
     since = request.GET.get('since')
     
     assoc = state.get('associative_memory', {})
@@ -353,9 +464,12 @@ def api_agent_memory(request, agent_name):
         
         # Filter by since
         if since:
-            since_count = int(since.replace('node_', ''))
-            if node.get('node_count', 0) <= since_count:
-                continue
+            try:
+                since_count = int(since.replace('node_', ''))
+                if node.get('node_count', 0) <= since_count:
+                    continue
+            except ValueError:
+                pass
         
         memories.append({
             'node_id': key,
@@ -373,7 +487,7 @@ def api_agent_memory(request, agent_name):
             break
     
     return JsonResponse({
-        'agent': agent_name.replace('_', ' '),
+        'agent': validated_name,
         'count': len(memories),
         'memories': memories
     })
@@ -400,6 +514,13 @@ def api_agent_whisper(request, agent_name):
     if not sim_code:
         return JsonResponse({'error': 'No active simulation'}, status=404)
     
+    # Validate agent name
+    validated_name = validate_persona_name(sim_code, agent_name)
+    if not validated_name:
+        return JsonResponse({
+            'error': f'Agent not found: {agent_name}'
+        }, status=404)
+    
     try:
         data = json.loads(request.body)
     except json.JSONDecodeError:
@@ -411,12 +532,17 @@ def api_agent_whisper(request, agent_name):
     if not content:
         return JsonResponse({'error': 'Missing content field'}, status=400)
     
+    # Validate whisper_type
+    if whisper_type not in ('thought', 'goal'):
+        whisper_type = 'thought'
+    
     # Write whisper to a file that the backend will pick up
-    agent_name_clean = agent_name.replace('_', ' ')
-    whisper_dir = f"temp_storage/whispers"
+    # Use sanitized name for the filename
+    sanitized_name = sanitize_path_component(validated_name)
+    whisper_dir = "temp_storage/whispers"
     os.makedirs(whisper_dir, exist_ok=True)
     
-    whisper_file = f"{whisper_dir}/{agent_name_clean}.json"
+    whisper_file = os.path.join(whisper_dir, f"{sanitized_name}.json")
     
     # Append to existing whispers
     whispers = []
@@ -435,7 +561,7 @@ def api_agent_whisper(request, agent_name):
     
     return JsonResponse({
         'status': 'success',
-        'agent': agent_name_clean,
+        'agent': validated_name,
         'whisper': content,
         'type': whisper_type,
         'pending_whispers': len(whispers)
@@ -459,15 +585,17 @@ def api_world_snapshot(request):
     if not sim_code:
         return JsonResponse({'error': 'No active simulation'}, status=404)
     
+    sanitized_sim = sanitize_path_component(sim_code)
+    
     # Load metadata
-    meta_path = f"storage/{sim_code}/reverie/meta.json"
+    meta_path = os.path.join("storage", sanitized_sim, "reverie", "meta.json")
     meta = {}
     if os.path.exists(meta_path):
         with open(meta_path) as f:
             meta = json.load(f)
     
     # Load current environment
-    env_path = f"storage/{sim_code}/environment/{step}.json"
+    env_path = os.path.join("storage", sanitized_sim, "environment", f"{step}.json")
     environment = {}
     if os.path.exists(env_path):
         with open(env_path) as f:
@@ -475,7 +603,7 @@ def api_world_snapshot(request):
     
     # Load all agent states (summary only)
     agents = {}
-    persona_path = f"storage/{sim_code}/personas"
+    persona_path = os.path.join("storage", sanitized_sim, "personas")
     
     if os.path.exists(persona_path):
         for name in os.listdir(persona_path):
@@ -485,7 +613,7 @@ def api_world_snapshot(request):
             if not os.path.isdir(full_path):
                 continue
             
-            scratch_path = f"{full_path}/bootstrap_memory/scratch.json"
+            scratch_path = os.path.join(full_path, "bootstrap_memory", "scratch.json")
             if os.path.exists(scratch_path):
                 with open(scratch_path) as f:
                     scratch = json.load(f)

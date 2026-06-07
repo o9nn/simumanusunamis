@@ -104,7 +104,8 @@ SESSION_COOKIE_HTTPONLY = True
 
 # Content security
 SECURE_CONTENT_TYPE_NOSNIFF = True
-SECURE_BROWSER_XSS_FILTER = True
+# Note: SECURE_BROWSER_XSS_FILTER is deprecated since Django 3.0
+# Modern browsers have removed XSS auditor functionality
 X_FRAME_OPTIONS = 'DENY'
 
 # HSTS
