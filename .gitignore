@@ -6,6 +6,22 @@ static_dirs/*
 !storage/base_the_ville_isabella_maria_klaus/*
 !storage/base_the_ville_n25/*
 
+# Docker
+docker/ssl/
+*.pem
+
+# Environment
+.env
+.env.local
+.env.production
+
+# Logs
+logs/
+*.log
+
+# Temp storage
+temp_storage/whispers/
+
 bin/
 include/
 pip-selfcheck.json
