@@ -1,0 +1,149 @@
+# =============================================================================
+# Docker Compose for Reverie Generative Agents
+# =============================================================================
+# This compose file orchestrates the multi-service deployment including:
+# - Django frontend server
+# - Reverie backend simulation server
+# - PostgreSQL database
+# - Redis for caching
+# - Nginx reverse proxy
+#
+# Usage:
+#   Development: docker-compose up
+#   Production:  docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+# =============================================================================
+
+version: '3.8'
+
+services:
+  # ===========================================================================
+  # Nginx Reverse Proxy
+  # ===========================================================================
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./docker/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./docker/ssl:/etc/nginx/ssl:ro
+      - static_files:/var/www/static:ro
+      - media_files:/var/www/media:ro
+    depends_on:
+      - frontend
+    restart: unless-stopped
+    networks:
+      - reverie_network
+
+  # ===========================================================================
+  # Django Frontend Server
+  # ===========================================================================
+  frontend:
+    build:
+      context: .
+      target: frontend
+    environment:
+      - DJANGO_SETTINGS_MODULE=frontend_server.settings.production
+      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY:-change-me-in-production}
+      - DJANGO_ALLOWED_HOSTS=${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1}
+      - DJANGO_DEBUG=False
+      - DATABASE_URL=postgres://${DB_USER:-reverie}:${DB_PASSWORD:-reverie}@db:5432/${DB_NAME:-reverie}
+      - REDIS_URL=redis://redis:6379/0
+      - CORS_ALLOW_ALL=False
+      - REQUIRE_API_AUTH=${REQUIRE_API_AUTH:-False}
+      - API_KEYS=${API_KEYS:-}
+    volumes:
+      - ./environment/frontend_server/storage:/app/frontend_server/storage
+      - ./environment/frontend_server/temp_storage:/app/frontend_server/temp_storage
+      - ./environment/frontend_server/compressed_storage:/app/frontend_server/compressed_storage
+      - static_files:/app/frontend_server/staticfiles
+      - media_files:/app/frontend_server/media
+    depends_on:
+      - db
+      - redis
+    restart: unless-stopped
+    networks:
+      - reverie_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ===========================================================================
+  # Reverie Backend Server
+  # ===========================================================================
+  backend:
+    build:
+      context: .
+      target: backend
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - KEY_OWNER=${KEY_OWNER:-Reverie}
+      - OPENAI_CHAT_MODEL=${OPENAI_CHAT_MODEL:-gpt-3.5-turbo}
+      - OPENAI_EMBEDDING_MODEL=${OPENAI_EMBEDDING_MODEL:-text-embedding-ada-002}
+      - ENABLE_TEXTGEN_FALLBACK=${ENABLE_TEXTGEN_FALLBACK:-False}
+      - TEXTGEN_MODEL_URL=${TEXTGEN_MODEL_URL:-}
+      - REVERIE_DEBUG=${REVERIE_DEBUG:-False}
+    volumes:
+      - ./environment/frontend_server/storage:/app/environment/frontend_server/storage
+      - ./environment/frontend_server/temp_storage:/app/environment/frontend_server/temp_storage
+      - ./environment/frontend_server/static_dirs:/app/environment/frontend_server/static_dirs
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
+    networks:
+      - reverie_network
+
+  # ===========================================================================
+  # PostgreSQL Database
+  # ===========================================================================
+  db:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_DB=${DB_NAME:-reverie}
+      - POSTGRES_USER=${DB_USER:-reverie}
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-reverie}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - reverie_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-reverie}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ===========================================================================
+  # Redis Cache
+  # ===========================================================================
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    networks:
+      - reverie_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+# =============================================================================
+# Networks
+# =============================================================================
+networks:
+  reverie_network:
+    driver: bridge
+
+# =============================================================================
+# Volumes
+# =============================================================================
+volumes:
+  postgres_data:
+  redis_data:
+  static_files:
+  media_files:
