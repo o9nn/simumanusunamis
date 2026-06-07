@@ -284,7 +284,7 @@ class InputSanitizationTestCase(TestCase):
         self.assertEqual(normalize_input('..\\..\\windows\\system32'), 'windowssystem32')
         
         # Test null bytes are removed (prevents null byte injection)
-        self.assertEqual(normalize_input('test\x00name'), 'test name')
+        self.assertEqual(normalize_input('test\x00name'), 'testname')
         
         # Test special characters
         self.assertEqual(normalize_input('test<script>'), 'testscript')

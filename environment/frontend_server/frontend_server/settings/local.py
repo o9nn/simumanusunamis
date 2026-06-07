@@ -2,7 +2,12 @@
 Local development Django settings for frontend_server.
 
 This file extends the base settings with local development overrides.
-Import this file only when running locally (not imported in production).
+It is imported by __init__.py after base.py, so all base settings are
+already available. Only override the settings needed for local development.
+
+Import order (in __init__.py):
+1. from .base import *     <- All base settings loaded
+2. from .local import *    <- This file overrides specific settings
 """
 
 # Local development overrides
