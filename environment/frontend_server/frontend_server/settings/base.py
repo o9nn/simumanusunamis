@@ -25,7 +25,7 @@ SECRET_KEY = 'c7l%1%b=2sh$o9zqvd4i*h8*__^@-5sm-y)m(1ib2t92)43@62'
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['localhost', '127.0.0.1', '0.0.0.0']
 
 
 # Application definition
@@ -131,17 +131,19 @@ MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(os.path.dirname(BASE_DIR), "media_root")
 
 
-# CORS_ORIGIN_WHITELIST = [
-# 'http://127.0.0.1:8080'
-# ]
+# =============================================================================
+# CORS Settings (for development)
+# =============================================================================
 
-# CORS_ORIGIN_ALLOW_ALL = True
-# CORS_ALLOW_CREDENTIALS = False
-
-
+CORS_ORIGIN_ALLOW_ALL = True
+CORS_ALLOW_CREDENTIALS = False
 
 
+# =============================================================================
+# External Agent API Settings (defaults for development)
+# =============================================================================
 
-
-
+# API authentication disabled by default in development
+REQUIRE_API_AUTH = False
+API_KEYS = []
 
