@@ -31,23 +31,18 @@ from global_methods import check_if_file_exists, find_filenames
 # Security: Path Sanitization
 # =============================================================================
 
-def sanitize_path_component(value):
+def normalize_input(value):
     """
-    Sanitize a path component to prevent path traversal attacks.
+    Normalize a user input value for comparison.
     
-    Removes or replaces dangerous characters and patterns:
-    - Path separators (/, backslash)
-    - Parent directory references (..)
-    - Null bytes
-    - Other dangerous characters
-    
-    Returns sanitized string safe for use in file paths.
+    Removes dangerous characters and normalizes to lowercase for safe comparison.
+    This function is only used to create a comparison key, NOT for file paths.
     """
     if not value:
         return ""
     
     # Convert to string and strip whitespace
-    value = str(value).strip()
+    value = str(value).strip().lower()
     
     # Remove null bytes
     value = value.replace('\x00', '')
@@ -57,54 +52,99 @@ def sanitize_path_component(value):
     value = value.replace('..', '')
     
     # Only allow safe characters: alphanumeric, space, underscore, hyphen
-    value = re.sub(r'[^a-zA-Z0-9\s_-]', '', value)
+    value = re.sub(r'[^a-z0-9\s_-]', '', value)
+    
+    # Normalize underscores to spaces for comparison
+    value = value.replace('_', ' ')
     
     return value
 
 
+def get_allowed_simulations():
+    """
+    Get list of valid simulation directories from storage.
+    Returns a dict mapping normalized names to actual directory names.
+    """
+    allowed = {}
+    storage_dir = "storage"
+    
+    if not os.path.isdir(storage_dir):
+        return allowed
+    
+    for name in os.listdir(storage_dir):
+        path = os.path.join(storage_dir, name)
+        if os.path.isdir(path) and not name.startswith('.'):
+            # Map normalized name to actual directory name
+            allowed[normalize_input(name)] = name
+    
+    return allowed
+
+
 def validate_simulation_code(sim_code):
     """
-    Validate that a simulation code exists and is safe.
-    Returns sanitized sim_code if valid, None otherwise.
+    Validate that a simulation code exists by checking against allowlist.
+    Returns the actual directory name if valid, None otherwise.
+    
+    Uses allowlist approach to break taint chain - returns value from
+    filesystem listing, not from user input.
     """
     if not sim_code:
         return None
     
-    sanitized = sanitize_path_component(sim_code)
-    if not sanitized:
+    normalized = normalize_input(sim_code)
+    if not normalized:
         return None
     
-    # Check that simulation exists
-    storage_path = os.path.join("storage", sanitized)
-    if not os.path.isdir(storage_path):
-        return None
+    allowed = get_allowed_simulations()
     
-    return sanitized
+    # Return the actual directory name from allowlist, not user input
+    return allowed.get(normalized)
+
+
+def get_allowed_personas(sim_dir):
+    """
+    Get list of valid persona directories for a simulation.
+    Returns a dict mapping normalized names to actual directory names.
+    """
+    allowed = {}
+    personas_dir = os.path.join("storage", sim_dir, "personas")
+    
+    if not os.path.isdir(personas_dir):
+        return allowed
+    
+    for name in os.listdir(personas_dir):
+        path = os.path.join(personas_dir, name)
+        if os.path.isdir(path) and not name.startswith('.'):
+            # Map normalized name to actual directory name
+            allowed[normalize_input(name)] = name
+    
+    return allowed
 
 
 def validate_persona_name(sim_code, persona_name):
     """
-    Validate that a persona exists in the simulation.
-    Returns sanitized persona name if valid, None otherwise.
+    Validate that a persona exists in the simulation by checking against allowlist.
+    Returns the actual persona directory name if valid, None otherwise.
+    
+    Uses allowlist approach to break taint chain - returns value from
+    filesystem listing, not from user input.
     """
     if not sim_code or not persona_name:
         return None
     
-    sanitized_sim = sanitize_path_component(sim_code)
-    sanitized_name = sanitize_path_component(persona_name)
-    
-    if not sanitized_sim or not sanitized_name:
+    # First validate the simulation code
+    sim_dir = validate_simulation_code(sim_code)
+    if not sim_dir:
         return None
     
-    # Handle underscore vs space in name
-    persona_name_clean = sanitized_name.replace("_", " ")
-    
-    # Check that persona exists
-    persona_path = os.path.join("storage", sanitized_sim, "personas", persona_name_clean)
-    if not os.path.isdir(persona_path):
+    normalized = normalize_input(persona_name)
+    if not normalized:
         return None
     
-    return persona_name_clean
+    allowed = get_allowed_personas(sim_dir)
+    
+    # Return the actual directory name from allowlist, not user input
+    return allowed.get(normalized)
 
 
 # =============================================================================
@@ -166,15 +206,16 @@ def get_current_simulation():
 
 def load_persona_state(sim_code, persona_name):
     """Load the full state of a persona from storage."""
-    # Validate and sanitize inputs
-    sanitized_sim = sanitize_path_component(sim_code)
-    persona_name_clean = validate_persona_name(sim_code, persona_name)
+    # Validate inputs using allowlist - returns actual directory names
+    validated_sim = validate_simulation_code(sim_code)
+    validated_persona = validate_persona_name(sim_code, persona_name)
     
-    if not sanitized_sim or not persona_name_clean:
+    if not validated_sim or not validated_persona:
         return None
     
-    memory_path = os.path.join("storage", sanitized_sim, "personas", 
-                               persona_name_clean, "bootstrap_memory")
+    # Use validated names from allowlist (not user input)
+    memory_path = os.path.join("storage", validated_sim, "personas", 
+                               validated_persona, "bootstrap_memory")
     
     if not os.path.exists(memory_path):
         return None
@@ -227,16 +268,16 @@ def api_simulation_status(request):
             'detail': 'No active simulation. Start the backend server first.'
         })
     
-    # Get simulation metadata (sim_code is already validated by get_current_simulation)
-    sanitized_sim = sanitize_path_component(sim_code)
-    meta_path = os.path.join("storage", sanitized_sim, "reverie", "meta.json")
+    # sim_code is already validated by get_current_simulation() using allowlist
+    # It returns the actual directory name from the filesystem, not user input
+    meta_path = os.path.join("storage", sim_code, "reverie", "meta.json")
     meta = {}
     if os.path.exists(meta_path):
         with open(meta_path) as f:
             meta = json.load(f)
     
     # Count agents
-    persona_path = os.path.join("storage", sanitized_sim, "personas")
+    persona_path = os.path.join("storage", sim_code, "personas")
     agent_count = 0
     if os.path.exists(persona_path):
         agent_count = len([d for d in os.listdir(persona_path) 
@@ -272,17 +313,16 @@ def api_list_agents(request):
             'agents': []
         }, status=404)
     
-    sanitized_sim = sanitize_path_component(sim_code)
-    
+    # sim_code is already validated by get_current_simulation() using allowlist
     # Get current positions
-    env_path = os.path.join("storage", sanitized_sim, "environment", f"{step}.json")
+    env_path = os.path.join("storage", sim_code, "environment", f"{step}.json")
     positions = {}
     if os.path.exists(env_path):
         with open(env_path) as f:
             positions = json.load(f)
     
     agents = []
-    persona_path = os.path.join("storage", sanitized_sim, "personas")
+    persona_path = os.path.join("storage", sim_code, "personas")
     
     if os.path.exists(persona_path):
         for name in os.listdir(persona_path):
@@ -354,10 +394,10 @@ def api_agent_state(request, agent_name):
         }, status=404)
     
     scratch = state.get('scratch', {})
-    sanitized_sim = sanitize_path_component(sim_code)
     
+    # sim_code is already validated by get_current_simulation() using allowlist
     # Get current position
-    env_path = os.path.join("storage", sanitized_sim, "environment", f"{step}.json")
+    env_path = os.path.join("storage", sim_code, "environment", f"{step}.json")
     position = {}
     if os.path.exists(env_path):
         with open(env_path) as f:
@@ -537,12 +577,14 @@ def api_agent_whisper(request, agent_name):
         whisper_type = 'thought'
     
     # Write whisper to a file that the backend will pick up
-    # Use sanitized name for the filename
-    sanitized_name = sanitize_path_component(validated_name)
+    # validated_name is already from allowlist (validate_persona_name returns 
+    # actual directory name from filesystem, not user input)
     whisper_dir = "temp_storage/whispers"
     os.makedirs(whisper_dir, exist_ok=True)
     
-    whisper_file = os.path.join(whisper_dir, f"{sanitized_name}.json")
+    # Replace spaces with underscores for safe filename
+    safe_filename = validated_name.replace(' ', '_')
+    whisper_file = os.path.join(whisper_dir, f"{safe_filename}.json")
     
     # Append to existing whispers
     whispers = []
@@ -585,17 +627,16 @@ def api_world_snapshot(request):
     if not sim_code:
         return JsonResponse({'error': 'No active simulation'}, status=404)
     
-    sanitized_sim = sanitize_path_component(sim_code)
-    
+    # sim_code is already validated by get_current_simulation() using allowlist
     # Load metadata
-    meta_path = os.path.join("storage", sanitized_sim, "reverie", "meta.json")
+    meta_path = os.path.join("storage", sim_code, "reverie", "meta.json")
     meta = {}
     if os.path.exists(meta_path):
         with open(meta_path) as f:
             meta = json.load(f)
     
     # Load current environment
-    env_path = os.path.join("storage", sanitized_sim, "environment", f"{step}.json")
+    env_path = os.path.join("storage", sim_code, "environment", f"{step}.json")
     environment = {}
     if os.path.exists(env_path):
         with open(env_path) as f:
@@ -603,7 +644,7 @@ def api_world_snapshot(request):
     
     # Load all agent states (summary only)
     agents = {}
-    persona_path = os.path.join("storage", sanitized_sim, "personas")
+    persona_path = os.path.join("storage", sim_code, "personas")
     
     if os.path.exists(persona_path):
         for name in os.listdir(persona_path):
