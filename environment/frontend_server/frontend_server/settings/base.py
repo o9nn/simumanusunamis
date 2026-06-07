@@ -25,7 +25,9 @@ SECRET_KEY = 'c7l%1%b=2sh$o9zqvd4i*h8*__^@-5sm-y)m(1ib2t92)43@62'
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['localhost', '127.0.0.1', '0.0.0.0']
+# ALLOWED_HOSTS should be configured per environment
+# Override in local.py for development, production.py for production
+ALLOWED_HOSTS = []
 
 
 # Application definition
@@ -132,18 +134,21 @@ MEDIA_ROOT = os.path.join(os.path.dirname(BASE_DIR), "media_root")
 
 
 # =============================================================================
-# CORS Settings (for development)
+# CORS Settings (defaults - configure per environment)
 # =============================================================================
 
-CORS_ORIGIN_ALLOW_ALL = True
+# CORS is disabled by default for security
+# Override in local.py for development, production.py for production
+CORS_ORIGIN_ALLOW_ALL = False
 CORS_ALLOW_CREDENTIALS = False
 
 
 # =============================================================================
-# External Agent API Settings (defaults for development)
+# External Agent API Settings (defaults)
 # =============================================================================
 
-# API authentication disabled by default in development
-REQUIRE_API_AUTH = False
+# API authentication enabled by default for security
+# Override in local.py for easier development testing
+REQUIRE_API_AUTH = True
 API_KEYS = []
 

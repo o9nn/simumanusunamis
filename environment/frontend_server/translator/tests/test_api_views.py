@@ -283,7 +283,7 @@ class InputSanitizationTestCase(TestCase):
         self.assertEqual(normalize_input('../../../etc/passwd'), 'etcpasswd')
         self.assertEqual(normalize_input('..\\..\\windows\\system32'), 'windowssystem32')
         
-        # Test null bytes
+        # Test null bytes are removed (prevents null byte injection)
         self.assertEqual(normalize_input('test\x00name'), 'test name')
         
         # Test special characters
@@ -297,3 +297,29 @@ class InputSanitizationTestCase(TestCase):
         self.assertEqual(normalize_input('Isabella Rodriguez'), 'isabella rodriguez')
         self.assertEqual(normalize_input('Klaus_Mueller'), 'klaus mueller')
         self.assertEqual(normalize_input('Maria-Lopez'), 'maria-lopez')
+    
+    def test_null_byte_injection_prevention(self):
+        """Test that null byte injection attempts are neutralized.
+        
+        Null byte injection can be used to truncate strings in some contexts,
+        potentially bypassing file extension checks or accessing unintended files.
+        This test verifies that null bytes are completely removed from input.
+        """
+        from translator.api_views import normalize_input
+        
+        # Test various null byte injection patterns
+        # Pattern: filename.jpg\x00.txt -> should not allow bypassing
+        result = normalize_input('image.jpg\x00.txt')
+        self.assertNotIn('\x00', result)
+        self.assertNotIn('/', result)
+        self.assertNotIn('\\', result)
+        
+        # Test null byte with path traversal
+        result = normalize_input('../etc/passwd\x00.jpg')
+        self.assertNotIn('\x00', result)
+        self.assertNotIn('/', result)
+        self.assertNotIn('..', result)
+        
+        # Test multiple null bytes
+        result = normalize_input('test\x00\x00\x00name')
+        self.assertNotIn('\x00', result)
