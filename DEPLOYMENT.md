@@ -283,7 +283,50 @@ Or as query parameter:
 ?api_key=your-api-key
 ```
 
-### Endpoints
+### Health Check Endpoints
+
+Health check endpoints do not require authentication.
+
+#### GET /health
+Basic health check for load balancers and monitoring.
+
+**Response:**
+```json
+{
+  "status": "healthy",
+  "service": "reverie-frontend",
+  "timestamp": "2023-02-13T15:20:00.000Z",
+  "checks": {
+    "storage": "ok",
+    "temp_storage": "ok",
+    "simulation": "active",
+    "database": "ok"
+  }
+}
+```
+
+#### GET /api/v1/health/detailed
+Detailed health check with system metrics.
+
+**Response:**
+```json
+{
+  "status": "healthy",
+  "service": "reverie-frontend",
+  "checks": {...},
+  "details": {
+    "simulation_count": 5,
+    "active_simulation": {
+      "sim_code": "test-sim-1",
+      "step": 150,
+      "agent_count": 3
+    },
+    "pending_whispers": 2
+  }
+}
+```
+
+### Simulation Endpoints
 
 #### GET /simulation/status
 Get current simulation status.
@@ -299,6 +342,8 @@ Get current simulation status.
   "persona_names": ["Isabella Rodriguez", "Klaus Mueller", "Maria Lopez"]
 }
 ```
+
+### Agent Endpoints
 
 #### GET /agents
 List all agents in simulation.
@@ -344,6 +389,33 @@ Get detailed agent state.
 }
 ```
 
+#### GET /agents/{name}/relationships
+Get agent's social network and relationship strengths.
+
+**Response:**
+```json
+{
+  "agent": "Isabella Rodriguez",
+  "relationship_count": 2,
+  "relationships": [
+    {
+      "name": "Klaus Mueller",
+      "interactions": 15,
+      "strength": "strong",
+      "sentiment": "positive",
+      "recent_topics": ["research", "coffee", "weather"]
+    },
+    {
+      "name": "Maria Lopez",
+      "interactions": 8,
+      "strength": "moderate",
+      "sentiment": "neutral",
+      "recent_topics": ["party", "work"]
+    }
+  ]
+}
+```
+
 #### POST /agents/{name}/whisper
 Inject a goal or memory into an agent.
 
@@ -363,6 +435,98 @@ Inject a goal or memory into an agent.
   "pending_whispers": 1
 }
 ```
+
+### Multi-Agent Interaction Endpoints
+
+#### POST /broadcast
+Broadcast a goal or announcement to multiple agents at once.
+
+**Request:**
+```json
+{
+  "content": "There's a party at the town square at 5pm!",
+  "type": "event",
+  "target_agents": "all"
+}
+```
+
+Or target specific agents:
+```json
+{
+  "content": "Emergency meeting at the cafe",
+  "type": "announcement",
+  "target_agents": ["Isabella Rodriguez", "Klaus Mueller"]
+}
+```
+
+**Response:**
+```json
+{
+  "status": "success",
+  "broadcast_id": "20230213152000",
+  "content": "There's a party at the town square at 5pm!",
+  "type": "event",
+  "agents_notified": 3,
+  "target_agents": ["Isabella Rodriguez", "Klaus Mueller", "Maria Lopez"]
+}
+```
+
+#### GET /interactions
+Get recent interactions between agents.
+
+**Query Parameters:**
+- `limit`: Max interactions to return (default: 50, max: 200)
+- `agent`: Filter to interactions involving a specific agent
+
+**Response:**
+```json
+{
+  "sim_code": "test-sim-1",
+  "count": 25,
+  "filter_agent": null,
+  "interactions": [
+    {
+      "agent": "Isabella Rodriguez",
+      "node_id": "node_123",
+      "created": "February 13, 2023, 14:30:00",
+      "description": "Isabella talked to Klaus about the party",
+      "poignancy": 7,
+      "keywords": ["party", "planning", "Klaus"]
+    }
+  ]
+}
+```
+
+#### GET /social-network
+Get the full social network graph of agent relationships.
+
+**Response:**
+```json
+{
+  "sim_code": "test-sim-1",
+  "node_count": 3,
+  "edge_count": 3,
+  "nodes": [
+    {
+      "id": "Isabella Rodriguez",
+      "label": "Isabella Rodriguez",
+      "type": "agent",
+      "currently": "planning Valentine's Day party",
+      "innate": "friendly, outgoing, hospitable"
+    }
+  ],
+  "edges": [
+    {
+      "source": "Isabella Rodriguez",
+      "target": "Klaus Mueller",
+      "weight": 15,
+      "strength": "strong"
+    }
+  ]
+}
+```
+
+### World State Endpoints
 
 #### GET /world/snapshot
 Export full world state.

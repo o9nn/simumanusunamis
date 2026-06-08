@@ -38,6 +38,13 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     
     # ==========================================================================
+    # Health Check Endpoints
+    # ==========================================================================
+    path('health', api_views.api_health, name='health'),
+    path('api/v1/health', api_views.api_health, name='api_health'),
+    path('api/v1/health/detailed', api_views.api_health_detailed, name='api_health_detailed'),
+    
+    # ==========================================================================
     # External Agent REST API (v1)
     # ==========================================================================
     
@@ -51,10 +58,16 @@ urlpatterns = [
     path('api/v1/agents/<str:agent_name>/state', api_views.api_agent_state, name='api_agent_state'),
     path('api/v1/agents/<str:agent_name>/memory', api_views.api_agent_memory, name='api_agent_memory'),
     path('api/v1/agents/<str:agent_name>/whisper', api_views.api_agent_whisper, name='api_agent_whisper'),
+    path('api/v1/agents/<str:agent_name>/relationships', api_views.api_agent_relationships, name='api_agent_relationships'),
     
     # World state
     path('api/v1/world/snapshot', api_views.api_world_snapshot, name='api_world_snapshot'),
     
     # Agent templates
     path('api/v1/agent-templates', api_views.api_list_agent_templates, name='api_list_agent_templates'),
+    
+    # Multi-agent interaction features
+    path('api/v1/broadcast', api_views.api_broadcast_goal, name='api_broadcast_goal'),
+    path('api/v1/interactions', api_views.api_interaction_history, name='api_interaction_history'),
+    path('api/v1/social-network', api_views.api_social_network, name='api_social_network'),
 ]
