@@ -28,6 +28,19 @@ from global_methods import check_if_file_exists, find_filenames
 
 
 # =============================================================================
+# Constants
+# =============================================================================
+
+# Relationship strength thresholds
+STRONG_RELATIONSHIP_THRESHOLD = 10
+MODERATE_RELATIONSHIP_THRESHOLD = 3
+
+# Sentiment score thresholds
+POSITIVE_SENTIMENT_THRESHOLD = 5
+NEGATIVE_SENTIMENT_THRESHOLD = -5
+
+
+# =============================================================================
 # Security: Path Sanitization
 # =============================================================================
 
@@ -823,10 +836,11 @@ def api_health(request):
     # Check database connectivity (simple check)
     try:
         from django.db import connection
+        from django.db.utils import DatabaseError, OperationalError
         with connection.cursor() as cursor:
             cursor.execute('SELECT 1')
         health_status['checks']['database'] = 'ok'
-    except Exception:
+    except (DatabaseError, OperationalError):
         health_status['checks']['database'] = 'error'
     
     # Determine overall health
@@ -1045,9 +1059,19 @@ def api_agent_relationships(request, agent_name):
     # Calculate relationship strength
     for rel in relationships.values():
         interactions = rel['interactions']
-        rel['strength'] = 'strong' if interactions > 10 else 'moderate' if interactions > 3 else 'weak'
+        if interactions > STRONG_RELATIONSHIP_THRESHOLD:
+            rel['strength'] = 'strong'
+        elif interactions > MODERATE_RELATIONSHIP_THRESHOLD:
+            rel['strength'] = 'moderate'
+        else:
+            rel['strength'] = 'weak'
         # Normalize sentiment
-        rel['sentiment'] = 'positive' if rel['sentiment_score'] > 5 else 'negative' if rel['sentiment_score'] < -5 else 'neutral'
+        if rel['sentiment_score'] > POSITIVE_SENTIMENT_THRESHOLD:
+            rel['sentiment'] = 'positive'
+        elif rel['sentiment_score'] < NEGATIVE_SENTIMENT_THRESHOLD:
+            rel['sentiment'] = 'negative'
+        else:
+            rel['sentiment'] = 'neutral'
     
     return JsonResponse({
         'agent': validated_name,
@@ -1177,11 +1201,17 @@ def api_social_network(request):
     
     # Convert to edge list
     for (source, target), weight in edge_weights.items():
+        if weight > STRONG_RELATIONSHIP_THRESHOLD:
+            strength = 'strong'
+        elif weight > MODERATE_RELATIONSHIP_THRESHOLD:
+            strength = 'moderate'
+        else:
+            strength = 'weak'
         edges.append({
             'source': source,
             'target': target,
             'weight': weight,
-            'strength': 'strong' if weight > 10 else 'moderate' if weight > 3 else 'weak'
+            'strength': strength
         })
     
     return JsonResponse({

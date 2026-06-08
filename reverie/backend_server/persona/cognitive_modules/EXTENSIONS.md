@@ -291,12 +291,26 @@ def on_conversation_end(persona, other_agent, conversation_log):
 
 ## Integration Examples
 
+> **Note**: The following examples demonstrate patterns for extending the cognitive modules.
+> The helper functions shown (e.g., `inject_goals`, `register_action`) are examples of 
+> functions you would implement as part of your extension - they are not part of the 
+> existing codebase.
+
 ### Example 1: Goal Broadcasting System
 
 ```python
-# In your custom extension module
-from persona.cognitive_modules.plan import inject_goals
-from persona.cognitive_modules.execute import register_action
+# In your custom extension module (e.g., extensions/goal_broadcast.py)
+# These imports and functions would be implemented by you
+
+def register_action(action_name, handler):
+    """Register a custom action handler (implement in your extension)."""
+    # Your implementation to add the action to the execute module
+    pass
+
+def inject_goals(persona, goals):
+    """Inject goals into persona's planning (implement in your extension)."""
+    # Your implementation to modify persona's daily_plan_req
+    pass
 
 # Register the broadcast action
 register_action('broadcast_goal', execute_goal_broadcast)
@@ -305,7 +319,9 @@ def execute_goal_broadcast(persona, params):
     """Announce a goal to coordinate with other agents."""
     goal = params['goal']
     
-    # Store as announced goal
+    # Store as announced goal (you'd add this attribute to scratch)
+    if not hasattr(persona.scratch, 'announced_goals'):
+        persona.scratch.announced_goals = []
     persona.scratch.announced_goals.append({
         'goal': goal,
         'timestamp': get_current_time()
