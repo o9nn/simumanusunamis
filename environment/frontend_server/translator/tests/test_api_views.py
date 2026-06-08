@@ -323,3 +323,194 @@ class InputSanitizationTestCase(TestCase):
         # Test multiple null bytes
         result = normalize_input('test\x00\x00\x00name')
         self.assertNotIn('\x00', result)
+
+
+# =============================================================================
+# Health Check Tests
+# =============================================================================
+
+class HealthCheckAPITestCase(TestCase):
+    """Tests for /health and /api/v1/health endpoints."""
+    
+    def setUp(self):
+        self.client = Client()
+    
+    def test_health_endpoint_returns_200(self):
+        """Test that health endpoint returns 200 when healthy."""
+        with patch('translator.api_views.os.path.isdir', return_value=True):
+            with patch('translator.api_views.os.access', return_value=True):
+                with patch('translator.api_views.get_current_simulation', return_value=(None, None)):
+                    response = self.client.get('/health')
+        
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.content)
+        self.assertEqual(data['status'], 'healthy')
+        self.assertEqual(data['service'], 'reverie-frontend')
+        self.assertIn('timestamp', data)
+        self.assertIn('checks', data)
+    
+    def test_api_v1_health_endpoint(self):
+        """Test that /api/v1/health endpoint works."""
+        with patch('translator.api_views.os.path.isdir', return_value=True):
+            with patch('translator.api_views.os.access', return_value=True):
+                with patch('translator.api_views.get_current_simulation', return_value=(None, None)):
+                    response = self.client.get('/api/v1/health')
+        
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.content)
+        self.assertEqual(data['status'], 'healthy')
+    
+    def test_health_with_active_simulation(self):
+        """Test health check when simulation is active."""
+        with patch('translator.api_views.os.path.isdir', return_value=True):
+            with patch('translator.api_views.os.access', return_value=True):
+                with patch('translator.api_views.get_current_simulation', return_value=('test-sim', 100)):
+                    response = self.client.get('/health')
+        
+        data = json.loads(response.content)
+        self.assertEqual(data['checks']['simulation'], 'active')
+
+
+class HealthCheckDetailedAPITestCase(TestCase):
+    """Tests for /api/v1/health/detailed endpoint."""
+    
+    def setUp(self):
+        self.client = Client()
+    
+    def test_detailed_health_includes_details(self):
+        """Test that detailed health endpoint includes extra metrics."""
+        with patch('translator.api_views.os.path.isdir', return_value=True):
+            with patch('translator.api_views.os.access', return_value=True):
+                with patch('translator.api_views.get_current_simulation', return_value=(None, None)):
+                    with patch('translator.api_views.os.listdir', return_value=[]):
+                        response = self.client.get('/api/v1/health/detailed')
+        
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.content)
+        self.assertIn('details', data)
+
+
+# =============================================================================
+# Multi-Agent Interaction Tests
+# =============================================================================
+
+class BroadcastGoalAPITestCase(TestCase):
+    """Tests for /api/v1/broadcast endpoint."""
+    
+    def setUp(self):
+        self.client = Client()
+        self.temp_dir = tempfile.mkdtemp()
+    
+    def tearDown(self):
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+    
+    @override_settings(REQUIRE_API_AUTH=False)
+    def test_post_required(self):
+        """Test that GET method is not allowed."""
+        response = self.client.get('/api/v1/broadcast')
+        self.assertEqual(response.status_code, 405)
+    
+    @override_settings(REQUIRE_API_AUTH=False)
+    def test_no_active_simulation_returns_404(self):
+        """Test response when no simulation is active."""
+        with patch('translator.api_views.get_current_simulation', return_value=(None, None)):
+            response = self.client.post(
+                '/api/v1/broadcast',
+                data=json.dumps({'content': 'Test broadcast', 'target_agents': 'all'}),
+                content_type='application/json'
+            )
+        
+        self.assertEqual(response.status_code, 404)
+    
+    @override_settings(REQUIRE_API_AUTH=False)
+    def test_missing_content_returns_400(self):
+        """Test response when content field is missing."""
+        with patch('translator.api_views.get_current_simulation', return_value=('test-sim', 0)):
+            response = self.client.post(
+                '/api/v1/broadcast',
+                data=json.dumps({'target_agents': 'all'}),
+                content_type='application/json'
+            )
+        
+        self.assertEqual(response.status_code, 400)
+        data = json.loads(response.content)
+        self.assertIn('error', data)
+
+
+class AgentRelationshipsAPITestCase(TestCase):
+    """Tests for /api/v1/agents/<name>/relationships endpoint."""
+    
+    def setUp(self):
+        self.client = Client()
+    
+    @override_settings(REQUIRE_API_AUTH=False)
+    def test_no_active_simulation_returns_404(self):
+        """Test response when no simulation is active."""
+        with patch('translator.api_views.get_current_simulation', return_value=(None, None)):
+            response = self.client.get('/api/v1/agents/Isabella_Rodriguez/relationships')
+        
+        self.assertEqual(response.status_code, 404)
+    
+    @override_settings(REQUIRE_API_AUTH=False)
+    def test_agent_not_found_returns_404(self):
+        """Test response when agent doesn't exist."""
+        with patch('translator.api_views.get_current_simulation', return_value=('test-sim', 0)):
+            with patch('translator.api_views.validate_persona_name', return_value=None):
+                response = self.client.get('/api/v1/agents/NonExistent_Agent/relationships')
+        
+        self.assertEqual(response.status_code, 404)
+
+
+class InteractionHistoryAPITestCase(TestCase):
+    """Tests for /api/v1/interactions endpoint."""
+    
+    def setUp(self):
+        self.client = Client()
+    
+    @override_settings(REQUIRE_API_AUTH=False)
+    def test_no_active_simulation_returns_404(self):
+        """Test response when no simulation is active."""
+        with patch('translator.api_views.get_current_simulation', return_value=(None, None)):
+            response = self.client.get('/api/v1/interactions')
+        
+        self.assertEqual(response.status_code, 404)
+    
+    @override_settings(REQUIRE_API_AUTH=False)
+    def test_interactions_with_limit(self):
+        """Test interactions endpoint respects limit parameter."""
+        with patch('translator.api_views.get_current_simulation', return_value=('test-sim', 0)):
+            with patch('translator.api_views.get_allowed_personas', return_value={}):
+                response = self.client.get('/api/v1/interactions?limit=10')
+        
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.content)
+        self.assertIn('interactions', data)
+
+
+class SocialNetworkAPITestCase(TestCase):
+    """Tests for /api/v1/social-network endpoint."""
+    
+    def setUp(self):
+        self.client = Client()
+    
+    @override_settings(REQUIRE_API_AUTH=False)
+    def test_no_active_simulation_returns_404(self):
+        """Test response when no simulation is active."""
+        with patch('translator.api_views.get_current_simulation', return_value=(None, None)):
+            response = self.client.get('/api/v1/social-network')
+        
+        self.assertEqual(response.status_code, 404)
+    
+    @override_settings(REQUIRE_API_AUTH=False)
+    def test_social_network_structure(self):
+        """Test that social network returns nodes and edges."""
+        with patch('translator.api_views.get_current_simulation', return_value=('test-sim', 0)):
+            with patch('translator.api_views.get_allowed_personas', return_value={}):
+                response = self.client.get('/api/v1/social-network')
+        
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.content)
+        self.assertIn('nodes', data)
+        self.assertIn('edges', data)
+        self.assertIn('node_count', data)
+        self.assertIn('edge_count', data)

@@ -28,6 +28,19 @@ from global_methods import check_if_file_exists, find_filenames
 
 
 # =============================================================================
+# Constants
+# =============================================================================
+
+# Relationship strength thresholds
+STRONG_RELATIONSHIP_THRESHOLD = 10
+MODERATE_RELATIONSHIP_THRESHOLD = 3
+
+# Sentiment score thresholds
+POSITIVE_SENTIMENT_THRESHOLD = 5
+NEGATIVE_SENTIMENT_THRESHOLD = -5
+
+
+# =============================================================================
 # Security: Path Sanitization
 # =============================================================================
 
@@ -783,4 +796,428 @@ def api_list_agent_templates(request):
     return JsonResponse({
         'count': len(templates),
         'templates': templates
+    })
+
+
+# =============================================================================
+# Health Check Endpoints
+# =============================================================================
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def api_health(request):
+    """
+    GET /health or GET /api/v1/health
+    
+    Basic health check endpoint for load balancers and monitoring.
+    Returns service status and basic diagnostics.
+    
+    No authentication required - designed for infrastructure monitoring.
+    """
+    health_status = {
+        'status': 'healthy',
+        'service': 'reverie-frontend',
+        'timestamp': datetime.datetime.now().isoformat(),
+        'checks': {}
+    }
+    
+    # Check storage directory accessibility
+    storage_ok = os.path.isdir("storage") and os.access("storage", os.R_OK | os.W_OK)
+    health_status['checks']['storage'] = 'ok' if storage_ok else 'error'
+    
+    # Check temp_storage directory
+    temp_ok = os.path.isdir("temp_storage") and os.access("temp_storage", os.R_OK | os.W_OK)
+    health_status['checks']['temp_storage'] = 'ok' if temp_ok else 'error'
+    
+    # Check if simulation is active
+    sim_code, step = get_current_simulation()
+    health_status['checks']['simulation'] = 'active' if sim_code else 'inactive'
+    
+    # Check database connectivity (simple check)
+    try:
+        from django.db import connection
+        from django.db.utils import DatabaseError, OperationalError
+        with connection.cursor() as cursor:
+            cursor.execute('SELECT 1')
+        health_status['checks']['database'] = 'ok'
+    except (DatabaseError, OperationalError):
+        health_status['checks']['database'] = 'error'
+    
+    # Determine overall health
+    critical_checks = ['storage', 'temp_storage', 'database']
+    if any(health_status['checks'].get(c) == 'error' for c in critical_checks):
+        health_status['status'] = 'unhealthy'
+        return JsonResponse(health_status, status=503)
+    
+    return JsonResponse(health_status)
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def api_health_detailed(request):
+    """
+    GET /api/v1/health/detailed
+    
+    Detailed health check with system metrics.
+    Requires API authentication.
+    """
+    # Get basic health first
+    basic_health = api_health(request)
+    health_data = json.loads(basic_health.content)
+    
+    # Add detailed metrics
+    health_data['details'] = {}
+    
+    # Count simulations
+    storage_path = "storage"
+    if os.path.isdir(storage_path):
+        sim_count = len([d for d in os.listdir(storage_path) 
+                        if os.path.isdir(os.path.join(storage_path, d)) 
+                        and not d.startswith('.')])
+        health_data['details']['simulation_count'] = sim_count
+    
+    # Check for active simulation details
+    sim_code, step = get_current_simulation()
+    if sim_code:
+        health_data['details']['active_simulation'] = {
+            'sim_code': sim_code,
+            'step': step
+        }
+        # Count active agents
+        persona_path = os.path.join("storage", sim_code, "personas")
+        if os.path.exists(persona_path):
+            agent_count = len([d for d in os.listdir(persona_path) 
+                              if os.path.isdir(os.path.join(persona_path, d)) 
+                              and not d.startswith('.')])
+            health_data['details']['active_simulation']['agent_count'] = agent_count
+    
+    # Check pending whispers
+    whispers_dir = "temp_storage/whispers"
+    if os.path.isdir(whispers_dir):
+        pending_whispers = len([f for f in os.listdir(whispers_dir) if f.endswith('.json')])
+        health_data['details']['pending_whispers'] = pending_whispers
+    
+    return JsonResponse(health_data)
+
+
+# =============================================================================
+# Multi-Agent Interaction Features
+# =============================================================================
+
+@csrf_exempt
+@api_auth_required
+@require_http_methods(["POST"])
+def api_broadcast_goal(request):
+    """
+    POST /api/v1/broadcast
+    
+    Broadcast a goal or announcement to multiple agents at once.
+    Useful for event injection, world events, or coordinated scenarios.
+    
+    Request body:
+    {
+        "content": "There's a party at the town square at 5pm!",
+        "type": "event" | "announcement",
+        "target_agents": ["agent1", "agent2"] | "all"
+    }
+    """
+    sim_code, _ = get_current_simulation()
+    
+    if not sim_code:
+        return JsonResponse({'error': 'No active simulation'}, status=404)
+    
+    try:
+        data = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'Invalid JSON body'}, status=400)
+    
+    content = data.get('content')
+    broadcast_type = data.get('type', 'event')
+    target_agents = data.get('target_agents', 'all')
+    
+    if not content:
+        return JsonResponse({'error': 'Missing content field'}, status=400)
+    
+    # Validate broadcast_type
+    if broadcast_type not in ('event', 'announcement', 'goal'):
+        broadcast_type = 'event'
+    
+    # Get all agents if target is "all"
+    if target_agents == 'all':
+        allowed = get_allowed_personas(sim_code)
+        target_agents = list(allowed.values())
+    else:
+        # Validate each agent name
+        validated_targets = []
+        for agent in target_agents:
+            validated = validate_persona_name(sim_code, agent)
+            if validated:
+                validated_targets.append(validated)
+        target_agents = validated_targets
+    
+    if not target_agents:
+        return JsonResponse({'error': 'No valid target agents'}, status=400)
+    
+    # Create whispers for all target agents
+    whisper_dir = "temp_storage/whispers"
+    os.makedirs(whisper_dir, exist_ok=True)
+    
+    broadcast_id = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+    success_count = 0
+    
+    for agent_name in target_agents:
+        safe_filename = agent_name.replace(' ', '_')
+        whisper_file = os.path.join(whisper_dir, f"{safe_filename}.json")
+        
+        whispers = []
+        if os.path.exists(whisper_file):
+            with open(whisper_file) as f:
+                whispers = json.load(f)
+        
+        whispers.append({
+            'content': content,
+            'type': broadcast_type,
+            'broadcast_id': broadcast_id,
+            'timestamp': datetime.datetime.now().isoformat()
+        })
+        
+        with open(whisper_file, 'w') as f:
+            json.dump(whispers, f, indent=2)
+        
+        success_count += 1
+    
+    return JsonResponse({
+        'status': 'success',
+        'broadcast_id': broadcast_id,
+        'content': content,
+        'type': broadcast_type,
+        'agents_notified': success_count,
+        'target_agents': target_agents
+    })
+
+
+@csrf_exempt
+@api_auth_required
+@require_http_methods(["GET"])
+def api_agent_relationships(request, agent_name):
+    """
+    GET /api/v1/agents/<name>/relationships
+    
+    Get an agent's social network - who they know and relationship strengths.
+    Analyzes chat history to infer relationships.
+    """
+    sim_code, _ = get_current_simulation()
+    
+    if not sim_code:
+        return JsonResponse({'error': 'No active simulation'}, status=404)
+    
+    validated_name = validate_persona_name(sim_code, agent_name)
+    if not validated_name:
+        return JsonResponse({'error': f'Agent not found: {agent_name}'}, status=404)
+    
+    state = load_persona_state(sim_code, agent_name)
+    if not state:
+        return JsonResponse({'error': f'Agent not found: {agent_name}'}, status=404)
+    
+    # Analyze associative memory for relationships
+    assoc = state.get('associative_memory', {})
+    relationships = {}
+    
+    for node_id, node in assoc.items():
+        # Look for chat memories
+        if node.get('type') == 'chat':
+            # Extract other person from chat
+            subject = node.get('subject', '')
+            obj = node.get('object', '')
+            desc = node.get('description', '')
+            
+            # Find other agents mentioned
+            for other_agent in get_allowed_personas(sim_code).values():
+                if other_agent != validated_name:
+                    if other_agent.lower() in desc.lower() or other_agent in subject or other_agent in obj:
+                        if other_agent not in relationships:
+                            relationships[other_agent] = {
+                                'name': other_agent,
+                                'interactions': 0,
+                                'recent_topics': [],
+                                'sentiment_score': 0
+                            }
+                        relationships[other_agent]['interactions'] += 1
+                        
+                        # Track recent topics
+                        keywords = node.get('keywords', [])
+                        for kw in keywords[:3]:
+                            if kw not in relationships[other_agent]['recent_topics']:
+                                relationships[other_agent]['recent_topics'].append(kw)
+                                if len(relationships[other_agent]['recent_topics']) > 5:
+                                    relationships[other_agent]['recent_topics'].pop(0)
+                        
+                        # Simple sentiment from poignancy
+                        poignancy = node.get('poignancy', 5)
+                        relationships[other_agent]['sentiment_score'] += poignancy - 5
+    
+    # Calculate relationship strength
+    for rel in relationships.values():
+        interactions = rel['interactions']
+        if interactions > STRONG_RELATIONSHIP_THRESHOLD:
+            rel['strength'] = 'strong'
+        elif interactions > MODERATE_RELATIONSHIP_THRESHOLD:
+            rel['strength'] = 'moderate'
+        else:
+            rel['strength'] = 'weak'
+        # Normalize sentiment
+        if rel['sentiment_score'] > POSITIVE_SENTIMENT_THRESHOLD:
+            rel['sentiment'] = 'positive'
+        elif rel['sentiment_score'] < NEGATIVE_SENTIMENT_THRESHOLD:
+            rel['sentiment'] = 'negative'
+        else:
+            rel['sentiment'] = 'neutral'
+    
+    return JsonResponse({
+        'agent': validated_name,
+        'relationship_count': len(relationships),
+        'relationships': list(relationships.values())
+    })
+
+
+@csrf_exempt
+@api_auth_required
+@require_http_methods(["GET"])
+def api_interaction_history(request):
+    """
+    GET /api/v1/interactions
+    
+    Get recent interactions between agents across the simulation.
+    Useful for understanding social dynamics.
+    
+    Query params:
+    - limit: max interactions to return (default 50)
+    - agent: filter to interactions involving a specific agent
+    """
+    sim_code, _ = get_current_simulation()
+    
+    if not sim_code:
+        return JsonResponse({'error': 'No active simulation'}, status=404)
+    
+    try:
+        limit = min(int(request.GET.get('limit', 50)), 200)
+    except ValueError:
+        limit = 50
+    
+    filter_agent = request.GET.get('agent')
+    if filter_agent:
+        filter_agent = validate_persona_name(sim_code, filter_agent)
+    
+    interactions = []
+    
+    # Gather chat memories from all agents
+    for agent_name in get_allowed_personas(sim_code).values():
+        state = load_persona_state(sim_code, agent_name)
+        if not state:
+            continue
+        
+        assoc = state.get('associative_memory', {})
+        for node_id, node in assoc.items():
+            if node.get('type') == 'chat':
+                # Apply filter if specified
+                if filter_agent and filter_agent != agent_name:
+                    desc = node.get('description', '').lower()
+                    if filter_agent.lower() not in desc:
+                        continue
+                
+                interactions.append({
+                    'agent': agent_name,
+                    'node_id': node_id,
+                    'created': node.get('created'),
+                    'description': node.get('description'),
+                    'subject': node.get('subject'),
+                    'object': node.get('object'),
+                    'poignancy': node.get('poignancy'),
+                    'keywords': node.get('keywords', [])
+                })
+    
+    # Sort by creation time (most recent first)
+    interactions.sort(key=lambda x: x.get('created', ''), reverse=True)
+    interactions = interactions[:limit]
+    
+    return JsonResponse({
+        'sim_code': sim_code,
+        'count': len(interactions),
+        'filter_agent': filter_agent,
+        'interactions': interactions
+    })
+
+
+@csrf_exempt
+@api_auth_required
+@require_http_methods(["GET"])
+def api_social_network(request):
+    """
+    GET /api/v1/social-network
+    
+    Get the full social network graph of agent relationships.
+    Returns nodes (agents) and edges (relationships based on interactions).
+    """
+    sim_code, _ = get_current_simulation()
+    
+    if not sim_code:
+        return JsonResponse({'error': 'No active simulation'}, status=404)
+    
+    agents = list(get_allowed_personas(sim_code).values())
+    
+    # Build nodes
+    nodes = []
+    for agent_name in agents:
+        state = load_persona_state(sim_code, agent_name)
+        scratch = state.get('scratch', {}) if state else {}
+        nodes.append({
+            'id': agent_name,
+            'label': agent_name,
+            'type': 'agent',
+            'currently': scratch.get('currently', ''),
+            'innate': scratch.get('innate', '')
+        })
+    
+    # Build edges by analyzing interactions
+    edges = []
+    edge_weights = {}
+    
+    for agent_name in agents:
+        state = load_persona_state(sim_code, agent_name)
+        if not state:
+            continue
+        
+        assoc = state.get('associative_memory', {})
+        for node in assoc.values():
+            if node.get('type') == 'chat':
+                desc = node.get('description', '').lower()
+                for other_agent in agents:
+                    if other_agent != agent_name and other_agent.lower() in desc:
+                        # Create sorted edge key for deduplication
+                        edge_key = tuple(sorted([agent_name, other_agent]))
+                        if edge_key not in edge_weights:
+                            edge_weights[edge_key] = 0
+                        edge_weights[edge_key] += 1
+    
+    # Convert to edge list
+    for (source, target), weight in edge_weights.items():
+        if weight > STRONG_RELATIONSHIP_THRESHOLD:
+            strength = 'strong'
+        elif weight > MODERATE_RELATIONSHIP_THRESHOLD:
+            strength = 'moderate'
+        else:
+            strength = 'weak'
+        edges.append({
+            'source': source,
+            'target': target,
+            'weight': weight,
+            'strength': strength
+        })
+    
+    return JsonResponse({
+        'sim_code': sim_code,
+        'nodes': nodes,
+        'edges': edges,
+        'node_count': len(nodes),
+        'edge_count': len(edges)
     })
