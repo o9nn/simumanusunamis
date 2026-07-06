@@ -1,0 +1,45 @@
+group_decision_v1.txt
+
+Variables: 
+!<INPUT 0>! -- group members list
+!<INPUT 1>! -- decision/question being discussed
+!<INPUT 2>! -- discussion history so far
+!<INPUT 3>! -- each member's current stance (if expressed)
+!<INPUT 4>! -- group context/relationships
+!<INPUT 5>! -- time pressure (low, medium, high)
+<commentblockmarker>###</commentblockmarker>
+Context for the task:
+
+A group is trying to make a decision together.
+
+Group members: !<INPUT 0>!
+
+Decision/Question: !<INPUT 1>!
+
+Discussion so far:
+!<INPUT 2>!
+
+Current stances of each member:
+!<INPUT 3>!
+
+Group relationships and context:
+!<INPUT 4>!
+
+Time pressure: !<INPUT 5>!
+
+---
+Task: Analyze the group decision-making process and determine:
+1. Is a consensus emerging?
+2. What are the main points of agreement and disagreement?
+3. What might help the group reach a decision?
+
+Output format: Output a json of the following format:
+{
+"consensus_reached": <true or false>,
+"consensus_direction": "<the emerging consensus position, or null if no consensus>",
+"points_of_agreement": ["<list of things most members agree on>"],
+"points_of_disagreement": ["<list of contentious issues>"],
+"suggested_compromise": "<a potential middle ground that might satisfy everyone>",
+"likely_decision": "<what the group will probably decide, or 'undecided'>",
+"needs_facilitator": <true if someone should step up to guide the decision>
+}

@@ -1,0 +1,50 @@
+group_utterance_v1.txt
+
+Variables: 
+!<INPUT 0>! -- speaking persona's ISS (identity stable set)
+!<INPUT 1>! -- speaking persona's name
+!<INPUT 2>! -- speaking persona's retrieved memories relevant to conversation
+!<INPUT 3>! -- group members list
+!<INPUT 4>! -- speaking persona's relationships with each group member
+!<INPUT 5>! -- group context/purpose
+!<INPUT 6>! -- current conversation history (last 6 turns)
+!<INPUT 7>! -- current location
+!<INPUT 8>! -- speaking persona's current emotional state
+<commentblockmarker>###</commentblockmarker>
+Context for the task:
+
+PART 1 - Speaker's Identity:
+!<INPUT 0>!
+
+PART 2 - Speaker's Relevant Memories:
+!<INPUT 2>!
+
+PART 3 - Group Information:
+Group members: !<INPUT 3>!
+
+!<INPUT 1>!'s relationships with group members:
+!<INPUT 4>!
+
+Group context: !<INPUT 5>!
+Location: !<INPUT 7>!
+
+PART 4 - Conversation So Far:
+!<INPUT 6>!
+
+PART 5 - Speaker's Current State:
+!<INPUT 1>! is feeling: !<INPUT 8>!
+
+---
+Task: Given the above context, generate what !<INPUT 1>! should say next in this group conversation. The utterance should:
+- Be natural and fit the ongoing conversation flow
+- Reflect the speaker's personality and relationships
+- Potentially address something from the conversation or bring up a new relevant point
+- Be appropriate for the group setting and context
+
+Output format: Output a json of the following format:
+{
+"utterance": "<!<INPUT 1>!'s statement or response>",
+"tone": "<the emotional tone: friendly, curious, assertive, supportive, humorous, etc.>",
+"addressing": "<who in the group this is primarily directed at, or 'everyone'>",
+"ends_conversation": <true if this naturally ends the conversation, false otherwise>
+}

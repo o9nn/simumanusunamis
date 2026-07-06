@@ -1,0 +1,49 @@
+group_memo_v1.txt
+
+Variables: 
+!<INPUT 0>! -- persona name (the one creating the memo)
+!<INPUT 1>! -- group members list
+!<INPUT 2>! -- full conversation transcript
+!<INPUT 3>! -- group context/purpose
+!<INPUT 4>! -- persona's relationship with group members
+!<INPUT 5>! -- key moments/highlights from the conversation
+<commentblockmarker>###</commentblockmarker>
+Context for the task:
+
+!<INPUT 0>! just finished participating in a group conversation.
+
+Group members: !<INPUT 1>!
+
+Group context: !<INPUT 3>!
+
+!<INPUT 0>!'s relationships with group members:
+!<INPUT 4>!
+
+Full conversation:
+!<INPUT 2>!
+
+Notable moments:
+!<INPUT 5>!
+
+---
+Task: Generate a memory summary that !<INPUT 0>! would form from this group conversation. This should capture:
+1. The most important things discussed
+2. How !<INPUT 0>! felt during the conversation
+3. What !<INPUT 0>! learned about the other participants
+4. Any commitments or plans that were made
+5. Overall impression of the group dynamic
+
+Output format: Output a json of the following format:
+{
+"summary": "<1-2 sentence summary of the conversation from !<INPUT 0>!'s perspective>",
+"key_takeaways": ["<list of important points !<INPUT 0>! will remember>"],
+"impressions_of_others": {
+  "<other person's name>": "<what !<INPUT 0>! now thinks of them based on this conversation>"
+},
+"emotional_impact": "<how this conversation affected !<INPUT 0>!'s mood>",
+"relationship_changes": {
+  "<other person's name>": "<stronger, weaker, or unchanged>"
+},
+"action_items": ["<any things !<INPUT 0>! committed to or should follow up on>"],
+"would_repeat": <true if !<INPUT 0>! would want to chat with this group again, false otherwise>
+}

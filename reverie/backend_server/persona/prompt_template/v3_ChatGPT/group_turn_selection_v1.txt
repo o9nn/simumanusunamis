@@ -1,0 +1,37 @@
+group_turn_selection_v1.txt
+
+Variables: 
+!<INPUT 0>! -- group members list (e.g., "John, Jane, and Bob")
+!<INPUT 1>! -- current conversation history
+!<INPUT 2>! -- last speaker name
+!<INPUT 3>! -- group context/purpose
+!<INPUT 4>! -- member descriptions (brief personality/role of each)
+<commentblockmarker>###</commentblockmarker>
+Context for the task: 
+
+A group conversation is taking place between the following people:
+!<INPUT 0>!
+
+Group Context: !<INPUT 3>!
+
+Brief descriptions of participants:
+!<INPUT 4>!
+
+Here is the conversation so far:
+!<INPUT 1>!
+
+The last person to speak was: !<INPUT 2>!
+
+---
+Task: Based on natural conversation dynamics, who should speak next? Consider:
+- People who haven't spoken recently should have priority
+- Someone might want to respond to a point just made
+- A natural facilitator or leader might guide the conversation
+- The topic might be particularly relevant to one person
+
+Output format: Output a json of the following format:
+{
+"next_speaker": "<name of the person who should speak next>",
+"reason": "<brief explanation for why this person should speak next>",
+"suggested_topic": "<optional: what topic they might address>"
+}
