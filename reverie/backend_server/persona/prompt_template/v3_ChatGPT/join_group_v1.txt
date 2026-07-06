@@ -1,0 +1,46 @@
+join_group_v1.txt
+
+Variables: 
+!<INPUT 0>! -- persona's ISS (identity stable set)
+!<INPUT 1>! -- persona's name
+!<INPUT 2>! -- persona's current activity
+!<INPUT 3>! -- group members currently in the group
+!<INPUT 4>! -- group's current activity/conversation topic
+!<INPUT 5>! -- persona's relationship with each group member
+!<INPUT 6>! -- persona's current schedule/plans
+!<INPUT 7>! -- persona's current energy/mood
+<commentblockmarker>###</commentblockmarker>
+Context for the task:
+
+PART 1 - About the Persona:
+!<INPUT 0>!
+
+Current activity: !<INPUT 2>!
+Current plans: !<INPUT 6>!
+Current mood/energy: !<INPUT 7>!
+
+PART 2 - The Nearby Group:
+Group members: !<INPUT 3>!
+What they're doing: !<INPUT 4>!
+
+!<INPUT 1>!'s relationships with group members:
+!<INPUT 5>!
+
+---
+Task: !<INPUT 1>! notices a group of people nearby. Should they join?
+
+Consider:
+- How well does !<INPUT 1>! know the group members?
+- Is what they're doing interesting to !<INPUT 1>!?
+- Does !<INPUT 1>! have time? Are they busy with something important?
+- What's !<INPUT 1>!'s current mood - do they feel social?
+- Would joining be natural or awkward?
+
+Output format: Output a json of the following format:
+{
+"should_join": <true or false>,
+"confidence": "<high, medium, or low confidence in this decision>",
+"reason": "<brief explanation of why to join or not join>",
+"approach_style": "<if joining: 'wave and walk over', 'wait for invitation', 'casual greeting', etc.>",
+"opening_line": "<if joining: what !<INPUT 1>! might say to join the group>"
+}

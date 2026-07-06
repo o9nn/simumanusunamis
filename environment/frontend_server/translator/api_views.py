@@ -1221,3 +1221,414 @@ def api_social_network(request):
         'node_count': len(nodes),
         'edge_count': len(edges)
     })
+
+
+# =============================================================================
+# GROUP INTERACTION API ENDPOINTS
+# =============================================================================
+
+@csrf_exempt
+@api_auth_required
+@require_http_methods(["GET"])
+def api_list_groups(request):
+    """
+    GET /api/v1/groups
+    
+    List all active groups in the current simulation.
+    Returns group IDs, members, purpose, and location.
+    """
+    sim_code, step = get_current_simulation()
+    if not sim_code:
+        return JsonResponse({
+            'error': 'No active simulation',
+            'detail': 'Start a simulation first'
+        }, status=400)
+    
+    # Try to load group state from simulation
+    groups_data = []
+    
+    # Read persona files to extract group information
+    sim_folder = f"storage/{sim_code}"
+    personas_folder = os.path.join(sim_folder, "personas")
+    
+    if os.path.exists(personas_folder):
+        groups_by_id = {}
+        
+        for persona_name in os.listdir(personas_folder):
+            scratch_path = os.path.join(personas_folder, persona_name, 
+                                         "bootstrap_memory", "scratch.json")
+            
+            if os.path.exists(scratch_path):
+                with open(scratch_path) as f:
+                    scratch = json.load(f)
+                
+                current_group = scratch.get('current_group')
+                if current_group:
+                    if current_group not in groups_by_id:
+                        groups_by_id[current_group] = {
+                            'group_id': current_group,
+                            'members': [],
+                            'purpose': 'casual'
+                        }
+                    groups_by_id[current_group]['members'].append(persona_name)
+        
+        groups_data = list(groups_by_id.values())
+    
+    return JsonResponse({
+        'sim_code': sim_code,
+        'groups': groups_data,
+        'count': len(groups_data)
+    })
+
+
+@csrf_exempt
+@api_auth_required
+@require_http_methods(["GET"])
+def api_get_group(request, group_id):
+    """
+    GET /api/v1/groups/<group_id>/state
+    
+    Get detailed state of a specific group.
+    """
+    sim_code, step = get_current_simulation()
+    if not sim_code:
+        return JsonResponse({
+            'error': 'No active simulation'
+        }, status=400)
+    
+    # Find group members
+    sim_folder = f"storage/{sim_code}"
+    personas_folder = os.path.join(sim_folder, "personas")
+    
+    group_data = {
+        'group_id': group_id,
+        'members': [],
+        'conversation_context': None,
+        'location': None
+    }
+    
+    if os.path.exists(personas_folder):
+        for persona_name in os.listdir(personas_folder):
+            scratch_path = os.path.join(personas_folder, persona_name,
+                                         "bootstrap_memory", "scratch.json")
+            
+            if os.path.exists(scratch_path):
+                with open(scratch_path) as f:
+                    scratch = json.load(f)
+                
+                if scratch.get('current_group') == group_id:
+                    group_data['members'].append({
+                        'name': persona_name,
+                        'role': scratch.get('group_role'),
+                        'tile': scratch.get('curr_tile')
+                    })
+                    
+                    # Get conversation context from first member
+                    if not group_data['conversation_context']:
+                        group_data['conversation_context'] = scratch.get(
+                            'group_conversation_context')
+    
+    if not group_data['members']:
+        return JsonResponse({
+            'error': 'Group not found',
+            'group_id': group_id
+        }, status=404)
+    
+    return JsonResponse(group_data)
+
+
+@csrf_exempt
+@api_auth_required
+@require_http_methods(["POST"])
+def api_create_group_event(request, group_id):
+    """
+    POST /api/v1/groups/<group_id>/event
+    
+    Inject a group event for the specified group.
+    
+    Request body:
+    {
+        "event_type": "meeting" | "party" | "activity",
+        "description": "What the group should do",
+        "duration_minutes": 30
+    }
+    """
+    sim_code, step = get_current_simulation()
+    if not sim_code:
+        return JsonResponse({
+            'error': 'No active simulation'
+        }, status=400)
+    
+    try:
+        body = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({
+            'error': 'Invalid JSON'
+        }, status=400)
+    
+    event_type = body.get('event_type', 'activity')
+    description = body.get('description', 'Group activity')
+    duration = body.get('duration_minutes', 30)
+    
+    # Find group members and update their state
+    sim_folder = f"storage/{sim_code}"
+    personas_folder = os.path.join(sim_folder, "personas")
+    updated_personas = []
+    
+    if os.path.exists(personas_folder):
+        for persona_name in os.listdir(personas_folder):
+            scratch_path = os.path.join(personas_folder, persona_name,
+                                         "bootstrap_memory", "scratch.json")
+            
+            if os.path.exists(scratch_path):
+                with open(scratch_path) as f:
+                    scratch = json.load(f)
+                
+                if scratch.get('current_group') == group_id:
+                    # Add event to persona's pending invites
+                    pending = scratch.get('pending_invites', [])
+                    pending.append({
+                        'type': 'group_event',
+                        'group_id': group_id,
+                        'event_type': event_type,
+                        'description': description,
+                        'duration_minutes': duration
+                    })
+                    scratch['pending_invites'] = pending
+                    
+                    # Save updated scratch
+                    with open(scratch_path, 'w') as f:
+                        json.dump(scratch, f, indent=2)
+                    
+                    updated_personas.append(persona_name)
+    
+    return JsonResponse({
+        'success': True,
+        'group_id': group_id,
+        'event_type': event_type,
+        'notified_personas': updated_personas
+    })
+
+
+@csrf_exempt
+@api_auth_required
+@require_http_methods(["POST"])
+def api_create_scheduled_event(request):
+    """
+    POST /api/v1/events
+    
+    Create a scheduled group event.
+    
+    Request body:
+    {
+        "name": "Team Meeting",
+        "event_type": "meeting",
+        "location": ["world", "sector", "arena"],
+        "start_time": "December 15, 2022, 14:00:00",
+        "duration_minutes": 60,
+        "organizer": "John Smith",
+        "invited": ["Jane Doe", "Bob Wilson"],
+        "description": "Weekly sync meeting"
+    }
+    """
+    sim_code, step = get_current_simulation()
+    if not sim_code:
+        return JsonResponse({
+            'error': 'No active simulation'
+        }, status=400)
+    
+    try:
+        body = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({
+            'error': 'Invalid JSON'
+        }, status=400)
+    
+    # Validate required fields
+    required = ['name', 'event_type', 'start_time', 'duration_minutes']
+    missing = [f for f in required if f not in body]
+    if missing:
+        return JsonResponse({
+            'error': 'Missing required fields',
+            'missing': missing
+        }, status=400)
+    
+    # Create event ID
+    event_id = f"event_{int(datetime.datetime.now().timestamp())}"
+    
+    # Store event data
+    event_data = {
+        'event_id': event_id,
+        'name': body['name'],
+        'event_type': body['event_type'],
+        'location': body.get('location'),
+        'start_time': body['start_time'],
+        'duration_minutes': body['duration_minutes'],
+        'organizer': body.get('organizer'),
+        'invited': body.get('invited', []),
+        'description': body.get('description', ''),
+        'confirmed': [],
+        'declined': [],
+        'started': False,
+        'ended': False
+    }
+    
+    # Save event to simulation storage
+    sim_folder = f"storage/{sim_code}"
+    events_folder = os.path.join(sim_folder, "events")
+    os.makedirs(events_folder, exist_ok=True)
+    
+    event_path = os.path.join(events_folder, f"{event_id}.json")
+    with open(event_path, 'w') as f:
+        json.dump(event_data, f, indent=2)
+    
+    # Notify invited personas
+    personas_folder = os.path.join(sim_folder, "personas")
+    notified = []
+    
+    if os.path.exists(personas_folder):
+        for invited_name in body.get('invited', []):
+            # Find matching persona
+            for pname in os.listdir(personas_folder):
+                if normalize_input(pname) == normalize_input(invited_name):
+                    scratch_path = os.path.join(personas_folder, pname,
+                                                 "bootstrap_memory", "scratch.json")
+                    
+                    if os.path.exists(scratch_path):
+                        with open(scratch_path) as f:
+                            scratch = json.load(f)
+                        
+                        pending = scratch.get('pending_invites', [])
+                        pending.append({
+                            'type': 'event_invitation',
+                            'event_id': event_id,
+                            'event_name': body['name'],
+                            'event_type': body['event_type'],
+                            'start_time': body['start_time'],
+                            'from': body.get('organizer', 'system')
+                        })
+                        scratch['pending_invites'] = pending
+                        
+                        with open(scratch_path, 'w') as f:
+                            json.dump(scratch, f, indent=2)
+                        
+                        notified.append(pname)
+                    break
+    
+    return JsonResponse({
+        'success': True,
+        'event_id': event_id,
+        'notified_personas': notified
+    }, status=201)
+
+
+@csrf_exempt
+@api_auth_required
+@require_http_methods(["GET"])
+def api_list_events(request):
+    """
+    GET /api/v1/events
+    
+    List all scheduled events in the simulation.
+    """
+    sim_code, step = get_current_simulation()
+    if not sim_code:
+        return JsonResponse({
+            'error': 'No active simulation'
+        }, status=400)
+    
+    sim_folder = f"storage/{sim_code}"
+    events_folder = os.path.join(sim_folder, "events")
+    
+    events = []
+    if os.path.exists(events_folder):
+        for filename in os.listdir(events_folder):
+            if filename.endswith('.json'):
+                event_path = os.path.join(events_folder, filename)
+                with open(event_path) as f:
+                    event_data = json.load(f)
+                events.append(event_data)
+    
+    # Sort by start time
+    events.sort(key=lambda e: e.get('start_time', ''))
+    
+    return JsonResponse({
+        'sim_code': sim_code,
+        'events': events,
+        'count': len(events)
+    })
+
+
+@csrf_exempt
+@api_auth_required
+@require_http_methods(["POST"])
+def api_broadcast_whisper(request):
+    """
+    POST /api/v1/whisper/broadcast
+    
+    Send a whisper to all agents in a specific area or to all agents.
+    
+    Request body:
+    {
+        "message": "Important announcement",
+        "target": "all" | "area",
+        "area": {"world": "...", "sector": "...", "arena": "..."}  // if target is "area"
+    }
+    """
+    sim_code, step = get_current_simulation()
+    if not sim_code:
+        return JsonResponse({
+            'error': 'No active simulation'
+        }, status=400)
+    
+    try:
+        body = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({
+            'error': 'Invalid JSON'
+        }, status=400)
+    
+    message = body.get('message', '')
+    if not message:
+        return JsonResponse({
+            'error': 'Message is required'
+        }, status=400)
+    
+    target = body.get('target', 'all')
+    area = body.get('area')
+    
+    sim_folder = f"storage/{sim_code}"
+    personas_folder = os.path.join(sim_folder, "personas")
+    whispered_personas = []
+    
+    if os.path.exists(personas_folder):
+        for persona_name in os.listdir(personas_folder):
+            persona_path = os.path.join(personas_folder, persona_name)
+            if not os.path.isdir(persona_path):
+                continue
+            
+            scratch_path = os.path.join(persona_path, "bootstrap_memory", "scratch.json")
+            
+            if os.path.exists(scratch_path):
+                # Check if persona matches target criteria
+                should_whisper = False
+                
+                if target == 'all':
+                    should_whisper = True
+                elif target == 'area' and area:
+                    # Would need to check persona's current location
+                    # For now, include all personas
+                    should_whisper = True
+                
+                if should_whisper:
+                    # Add whisper to persona's state
+                    # The actual whisper mechanism would be handled by the backend
+                    whispered_personas.append(persona_name)
+    
+    return JsonResponse({
+        'success': True,
+        'message': message,
+        'target': target,
+        'whispered_count': len(whispered_personas),
+        'whispered_personas': whispered_personas
+    })

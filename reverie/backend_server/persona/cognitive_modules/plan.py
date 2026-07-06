@@ -1098,9 +1098,413 @@ def plan(persona, maze, personas, new_day, retrieved):
   return persona.scratch.act_address
 
 
+# =============================================================================
+# GROUP ACTIVITY PLANNING SYSTEM
+# =============================================================================
+
+class GroupActivityPlan:
+  """
+  Represents a planned group activity with all participants and scheduling info.
+  """
+  def __init__(self, activity_name, participants, location, 
+               start_time, duration_minutes, purpose="casual"):
+    self.activity_name = activity_name
+    self.participants = participants  # List of persona names
+    self.location = location  # (world, sector, arena) tuple
+    self.start_time = start_time
+    self.duration_minutes = duration_minutes
+    self.purpose = purpose  # "casual", "meeting", "event", "collaborative"
+    self.confirmed_participants = []
+    self.declined_participants = []
+    
+  def to_dict(self):
+    return {
+      "activity_name": self.activity_name,
+      "participants": self.participants,
+      "location": self.location,
+      "start_time": self.start_time.strftime("%B %d, %Y, %H:%M:%S") if self.start_time else None,
+      "duration_minutes": self.duration_minutes,
+      "purpose": self.purpose,
+      "confirmed_participants": self.confirmed_participants,
+      "declined_participants": self.declined_participants
+    }
 
 
+def generate_group_activity(personas, maze, activity_type="casual_gathering"):
+  """
+  Generates a group activity plan for multiple personas.
+  
+  INPUT:
+    personas: List of Persona instances to include in the activity
+    maze: The maze instance
+    activity_type: Type of activity ("casual_gathering", "meeting", "collaborative_work")
+  OUTPUT:
+    GroupActivityPlan instance
+  """
+  if len(personas) < 2:
+    return None
+  
+  # Generate activity description based on type
+  activity_descriptions = {
+    "casual_gathering": ["chatting together", "having a conversation", "socializing"],
+    "meeting": ["having a meeting", "discussing plans", "coordinating"],
+    "collaborative_work": ["working together", "collaborating on a project", "helping each other"],
+    "social_event": ["attending an event", "celebrating", "gathering for a special occasion"]
+  }
+  
+  activity_name = random.choice(activity_descriptions.get(activity_type, ["gathering"]))
+  
+  # Find a common location - use the first persona's current location as base
+  base_persona = personas[0]
+  base_tile = base_persona.scratch.curr_tile
+  tile_info = maze.access_tile(base_tile)
+  
+  location = (tile_info.get("world"), tile_info.get("sector"), tile_info.get("arena"))
+  
+  # Set timing
+  start_time = base_persona.scratch.curr_time
+  
+  # Duration based on activity type
+  duration_map = {
+    "casual_gathering": random.randint(15, 45),
+    "meeting": random.randint(30, 60),
+    "collaborative_work": random.randint(45, 90),
+    "social_event": random.randint(60, 120)
+  }
+  duration_minutes = duration_map.get(activity_type, 30)
+  
+  participant_names = [p.scratch.name for p in personas]
+  
+  return GroupActivityPlan(
+    activity_name=activity_name,
+    participants=participant_names,
+    location=location,
+    start_time=start_time,
+    duration_minutes=duration_minutes,
+    purpose=activity_type
+  )
 
+
+def should_join_group_activity(persona, activity_plan, other_personas):
+  """
+  Determines if a persona should join a group activity.
+  
+  INPUT:
+    persona: The Persona instance making the decision
+    activity_plan: GroupActivityPlan instance
+    other_personas: Dict of all personas
+  OUTPUT:
+    (should_join: bool, reason: str)
+  """
+  # Check if persona is already busy
+  if persona.scratch.chatting_with:
+    return False, "already in conversation"
+  
+  # Check relationship with other participants
+  total_relationship = 0
+  participant_count = 0
+  
+  for participant_name in activity_plan.participants:
+    if participant_name == persona.scratch.name:
+      continue
+    
+    rel_score = persona.scratch.relationship_scores.get(participant_name, 0.3)
+    total_relationship += rel_score
+    participant_count += 1
+  
+  if participant_count == 0:
+    return True, "no other participants to consider"
+  
+  avg_relationship = total_relationship / participant_count
+  
+  # Higher relationship = more likely to join
+  # Also consider schedule conflicts
+  
+  # Simple decision based on average relationship
+  if avg_relationship > 0.5:
+    return True, "good relationships with participants"
+  elif avg_relationship > 0.3:
+    # 60% chance to join with moderate relationships
+    if random.random() < 0.6:
+      return True, "moderate interest"
+    return False, "not feeling social"
+  else:
+    # Only 30% chance with weak relationships
+    if random.random() < 0.3:
+      return True, "curious about the activity"
+    return False, "prefers to do something else"
+
+
+def coordinate_group_arrival(personas, target_location, maze):
+  """
+  Coordinates multiple personas arriving at the same location for a group activity.
+  
+  INPUT:
+    personas: List of Persona instances
+    target_location: Target tile coordinates
+    maze: The maze instance
+  OUTPUT:
+    arrival_plan: Dict mapping persona names to their paths and estimated arrival times
+  """
+  arrival_plan = {}
+  
+  for persona in personas:
+    curr_tile = persona.scratch.curr_tile
+    
+    # Calculate path to target location
+    # Note: This is simplified - actual pathfinding would use maze's pathfinding
+    distance = math.dist(curr_tile, target_location)
+    
+    # Estimate arrival time (assume 1 tile per minute)
+    estimated_minutes = max(1, int(distance))
+    
+    arrival_plan[persona.scratch.name] = {
+      "current_position": curr_tile,
+      "target_position": target_location,
+      "estimated_minutes": estimated_minutes,
+      "path": []  # Would be filled by actual pathfinding
+    }
+  
+  return arrival_plan
+
+
+def _group_chat_react(maze, personas, focused_event, personas_dict):
+  """
+  Handles reaction when a group conversation should occur.
+  Similar to _chat_react but for N personas.
+  
+  INPUT:
+    maze: The maze instance
+    personas: List of Persona instances in the group
+    focused_event: The event triggering the group chat
+    personas_dict: Dictionary of all personas
+  """
+  from persona.cognitive_modules.converse import (
+    agent_group_chat, 
+    update_group_relationships,
+    store_group_conversation_memory
+  )
+  
+  if len(personas) < 2:
+    return
+  
+  # Generate the group conversation
+  convo = agent_group_chat(maze, personas, max_turns=15)
+  
+  if not convo:
+    return
+  
+  # Calculate duration based on conversation length
+  duration_min = max(5, len(convo) * 2)  # ~2 minutes per turn
+  
+  # Generate summary
+  participant_names = [p.scratch.name for p in personas]
+  if len(participant_names) == 2:
+    summary = f"chatting with {participant_names[1]}"
+  else:
+    summary = f"group conversation with {', '.join(participant_names[1:-1])}, and {participant_names[-1]}"
+  
+  inserted_act = summary
+  inserted_act_dur = duration_min
+  
+  # Calculate end time
+  curr_time = personas[0].scratch.curr_time
+  if curr_time.second != 0:
+    temp_curr_time = curr_time + datetime.timedelta(seconds=60 - curr_time.second)
+    chatting_end_time = temp_curr_time + datetime.timedelta(minutes=inserted_act_dur)
+  else:
+    chatting_end_time = curr_time + datetime.timedelta(minutes=inserted_act_dur)
+  
+  # Update each persona's state
+  for i, persona in enumerate(personas):
+    # Build address and event info
+    other_names = [p.scratch.name for p in personas if p != persona]
+    
+    if len(other_names) == 1:
+      act_address = f"<persona> {other_names[0]}"
+      act_event = (persona.name, "chat with", other_names[0])
+      chatting_with = other_names[0]
+    else:
+      # For group, use first other person as primary target
+      act_address = f"<group> {', '.join(other_names)}"
+      act_event = (persona.name, "group chat with", " and ".join(other_names))
+      chatting_with = other_names[0]  # Primary contact
+    
+    chatting_with_buffer = {name: 800 for name in other_names}
+    
+    act_pronunciatio = "💬"
+    act_obj_description = None
+    act_obj_pronunciatio = None
+    act_obj_event = (None, None, None)
+    
+    # Update persona's current group
+    persona.scratch.current_group = f"group_{hash(tuple(sorted(participant_names))) % 10000}"
+    persona.scratch.group_conversation_context = {
+      "participants": participant_names,
+      "topic": inserted_act,
+      "started": curr_time.strftime("%B %d, %Y, %H:%M:%S")
+    }
+    
+    _create_react(persona, inserted_act, inserted_act_dur,
+      act_address, act_event, chatting_with, convo, chatting_with_buffer, 
+      chatting_end_time, act_pronunciatio, act_obj_description, 
+      act_obj_pronunciatio, act_obj_event)
+  
+  # Update relationships based on the conversation
+  update_group_relationships(personas, convo)
+  
+  # Store conversation in memory
+  store_group_conversation_memory(personas, convo, maze)
+
+
+def plan_with_group_awareness(persona, maze, personas, new_day, retrieved):
+  """
+  Extended planning function that considers group activities.
+  
+  INPUT:
+    persona: The Persona instance
+    maze: The maze instance
+    personas: Dict of all personas
+    new_day: Boolean indicating if this is a new day
+    retrieved: Retrieved memories
+  OUTPUT:
+    act_address: The planned action address
+  """
+  # First, check if there are any pending group invitations
+  pending_invites = persona.scratch.pending_invites
+  if pending_invites:
+    # Process the most recent invite
+    invite = pending_invites[0]
+    
+    if invite.get("type") == "group_activity":
+      # Decide whether to join
+      activity_plan = invite.get("activity_plan")
+      if activity_plan:
+        other_personas = {name: personas.get(name) for name in activity_plan.participants 
+                         if name in personas}
+        should_join, reason = should_join_group_activity(
+            persona, activity_plan, other_personas)
+        
+        if should_join:
+          # Accept the invite
+          persona.scratch.pending_invites.pop(0)
+          persona.scratch.current_group = invite.get("group_id")
+          
+          # Update activity plan
+          activity_plan.confirmed_participants.append(persona.scratch.name)
+          
+          print(f"{persona.scratch.name} accepted group invite: {reason}")
+        else:
+          # Decline
+          persona.scratch.pending_invites.pop(0)
+          activity_plan.declined_participants.append(persona.scratch.name)
+          print(f"{persona.scratch.name} declined group invite: {reason}")
+  
+  # Check if persona should join any nearby group
+  if persona.scratch.nearby_group_members and not persona.scratch.current_group:
+    # Consider joining the nearby group
+    nearby_names = persona.scratch.nearby_group_members
+    
+    # Check relationships with nearby group members
+    total_rel = sum(persona.scratch.relationship_scores.get(name, 0.3) 
+                   for name in nearby_names)
+    avg_rel = total_rel / len(nearby_names) if nearby_names else 0
+    
+    # Join if relationships are good and random chance
+    if avg_rel > 0.4 and random.random() < 0.5:
+      # Join the group
+      group_personas = [personas[name] for name in nearby_names if name in personas]
+      group_personas.append(persona)
+      
+      if len(group_personas) >= 2:
+        # Initiate group chat
+        _group_chat_react(maze, group_personas, None, personas)
+        return persona.scratch.act_address
+  
+  # Fall back to standard planning
+  return plan(persona, maze, personas, new_day, retrieved)
+
+
+def invite_to_group_activity(inviter, invitees, activity_plan):
+  """
+  Sends group activity invitations to other personas.
+  
+  INPUT:
+    inviter: Persona who is sending the invitation
+    invitees: List of Persona instances to invite
+    activity_plan: GroupActivityPlan instance
+  """
+  for invitee in invitees:
+    if invitee.scratch.name == inviter.scratch.name:
+      continue
+    
+    invite = {
+      "type": "group_activity",
+      "from": inviter.scratch.name,
+      "activity_plan": activity_plan,
+      "group_id": f"group_{hash(tuple(sorted(activity_plan.participants))) % 10000}",
+      "timestamp": inviter.scratch.curr_time.strftime("%B %d, %Y, %H:%M:%S")
+    }
+    
+    invitee.scratch.pending_invites.append(invite)
+
+
+def synchronize_group_movement(group_members, target_location, maze):
+  """
+  Coordinates group movement to maintain formation.
+  
+  INPUT:
+    group_members: List of Persona instances in the group
+    target_location: Target tile coordinates (x, y)
+    maze: The maze instance
+  OUTPUT:
+    movement_plan: Dict with synchronized movement instructions
+  """
+  if not group_members:
+    return {}
+  
+  movement_plan = {}
+  
+  # Find the leader (first member or designated leader)
+  leader = group_members[0]
+  leader_role = leader.scratch.group_role
+  
+  # If someone is designated as leader, use them
+  for member in group_members:
+    if member.scratch.group_role == "leader":
+      leader = member
+      break
+  
+  # Calculate paths for each member
+  for i, member in enumerate(group_members):
+    curr_tile = member.scratch.curr_tile
+    
+    # Leader goes directly to target
+    if member == leader:
+      movement_plan[member.scratch.name] = {
+        "role": "leader",
+        "target": target_location,
+        "wait_for": []
+      }
+    else:
+      # Followers target a position near the leader
+      # Offset slightly to avoid collision
+      offset_x = (i % 3) - 1  # -1, 0, or 1
+      offset_y = (i // 3) - 1
+      
+      follower_target = (
+        target_location[0] + offset_x,
+        target_location[1] + offset_y
+      )
+      
+      movement_plan[member.scratch.name] = {
+        "role": "follower",
+        "target": follower_target,
+        "wait_for": [leader.scratch.name],
+        "maintain_distance": 2  # Stay within 2 tiles of leader
+      }
+  
+  return movement_plan
 
 
 

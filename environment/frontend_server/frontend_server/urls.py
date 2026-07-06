@@ -70,4 +70,12 @@ urlpatterns = [
     path('api/v1/broadcast', api_views.api_broadcast_goal, name='api_broadcast_goal'),
     path('api/v1/interactions', api_views.api_interaction_history, name='api_interaction_history'),
     path('api/v1/social-network', api_views.api_social_network, name='api_social_network'),
+    
+    # Group interaction API endpoints
+    path('api/v1/groups', api_views.api_list_groups, name='api_list_groups'),
+    path('api/v1/groups/<str:group_id>/state', api_views.api_get_group, name='api_get_group'),
+    path('api/v1/groups/<str:group_id>/event', api_views.api_create_group_event, name='api_create_group_event'),
+    path('api/v1/events', api_views.api_list_events, name='api_list_events'),
+    path('api/v1/events/create', api_views.api_create_scheduled_event, name='api_create_scheduled_event'),
+    path('api/v1/whisper/broadcast', api_views.api_broadcast_whisper, name='api_broadcast_whisper'),
 ]

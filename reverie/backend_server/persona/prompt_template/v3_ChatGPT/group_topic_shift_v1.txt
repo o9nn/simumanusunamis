@@ -1,0 +1,41 @@
+group_topic_shift_v1.txt
+
+Variables: 
+!<INPUT 0>! -- group members list
+!<INPUT 1>! -- current conversation history (all turns)
+!<INPUT 2>! -- current topic/theme of discussion
+!<INPUT 3>! -- group context/purpose
+!<INPUT 4>! -- duration of conversation so far (in turns)
+<commentblockmarker>###</commentblockmarker>
+Context for the task:
+
+A group conversation is taking place between:
+!<INPUT 0>!
+
+Group context: !<INPUT 3>!
+
+Current topic being discussed: !<INPUT 2>!
+
+Conversation so far (!<INPUT 4>! turns):
+!<INPUT 1>!
+
+---
+Task: Analyze the conversation and determine:
+1. Whether the current topic has been sufficiently explored
+2. Whether the conversation should naturally shift to a new topic
+3. What natural topic transitions might occur
+
+Consider:
+- Has the current topic been discussed from multiple angles?
+- Are participants showing signs of wanting to move on (brief responses, changing subject)?
+- Is there a natural segue to a related topic?
+- Has someone introduced something that could become the new focus?
+
+Output format: Output a json of the following format:
+{
+"current_topic_exhausted": <true or false>,
+"suggested_new_topic": "<a natural new topic to discuss, or null if continuing current topic>",
+"transition_trigger": "<what in the conversation suggests a topic change, or 'none'>",
+"natural_transition_phrase": "<a phrase someone could use to shift topics naturally>",
+"conversation_energy": "<high, medium, or low - based on engagement level>"
+}

@@ -36,6 +36,293 @@ from maze import *
 from persona.persona import *
 
 # ---------------------------------------------------------------------------
+# GROUP INTERACTION SYSTEM
+# ---------------------------------------------------------------------------
+# Import group dynamics modules
+try:
+  from persona.cognitive_modules.group_dynamics import (
+    Group, GroupManager, GroupPurpose, GroupRole, get_group_manager
+  )
+  from persona.memory_structures.social_network import (
+    SocialNetwork, Relationship, RelationshipType, get_social_network
+  )
+  from persona.cognitive_modules.collaborate import (
+    CollaborationManager, SharedGoal, SharedTask, get_collaboration_manager
+  )
+  from persona.cognitive_modules.consensus import (
+    ConsensusManager, GroupDecision, get_consensus_manager
+  )
+  GROUP_MODULES_AVAILABLE = True
+except ImportError as e:
+  print(f"Warning: Group interaction modules not fully available: {e}")
+  GROUP_MODULES_AVAILABLE = False
+
+
+class GroupEvent:
+  """
+  Represents a scheduled group event in the simulation.
+  Events can be meetings, social gatherings, collaborative work sessions, etc.
+  """
+  
+  def __init__(self, event_id, name, event_type, location, start_time,
+               duration_minutes, organizer=None, invited=None, description=None):
+    """
+    Initialize a group event.
+    
+    Args:
+      event_id: Unique identifier for the event
+      name: Human-readable name of the event
+      event_type: Type of event ("meeting", "party", "class", "work_session", etc.)
+      location: Tuple of (world, sector, arena) or tile coordinates
+      start_time: datetime when the event starts
+      duration_minutes: Duration of the event in minutes
+      organizer: Name of the persona organizing the event
+      invited: List of persona names invited to the event
+      description: Optional description of the event
+    """
+    self.event_id = event_id
+    self.name = name
+    self.event_type = event_type
+    self.location = location
+    self.start_time = start_time
+    self.duration_minutes = duration_minutes
+    self.organizer = organizer
+    self.invited = invited or []
+    self.description = description or ""
+    
+    # Event state
+    self.confirmed = []  # Personas who confirmed attendance
+    self.declined = []   # Personas who declined
+    self.attendees = []  # Personas who actually showed up
+    self.started = False
+    self.ended = False
+    self.conversation_log = []  # Group conversations during event
+    
+  @property
+  def end_time(self):
+    """Calculate the end time of the event."""
+    return self.start_time + datetime.timedelta(minutes=self.duration_minutes)
+  
+  def is_active(self, current_time):
+    """Check if the event is currently active."""
+    return self.start_time <= current_time < self.end_time
+  
+  def should_start(self, current_time):
+    """Check if the event should start now."""
+    return current_time >= self.start_time and not self.started
+  
+  def should_end(self, current_time):
+    """Check if the event should end now."""
+    return current_time >= self.end_time and not self.ended
+  
+  def add_attendee(self, persona_name):
+    """Add a persona as an attendee."""
+    if persona_name not in self.attendees:
+      self.attendees.append(persona_name)
+  
+  def remove_attendee(self, persona_name):
+    """Remove a persona from attendees (early departure)."""
+    if persona_name in self.attendees:
+      self.attendees.remove(persona_name)
+  
+  def confirm_attendance(self, persona_name):
+    """Record that a persona has confirmed attendance."""
+    if persona_name in self.invited and persona_name not in self.confirmed:
+      self.confirmed.append(persona_name)
+  
+  def decline_attendance(self, persona_name):
+    """Record that a persona has declined attendance."""
+    if persona_name in self.invited and persona_name not in self.declined:
+      self.declined.append(persona_name)
+  
+  def to_dict(self):
+    """Convert event to dictionary for serialization."""
+    return {
+      "event_id": self.event_id,
+      "name": self.name,
+      "event_type": self.event_type,
+      "location": self.location,
+      "start_time": self.start_time.strftime("%B %d, %Y, %H:%M:%S"),
+      "duration_minutes": self.duration_minutes,
+      "organizer": self.organizer,
+      "invited": self.invited,
+      "description": self.description,
+      "confirmed": self.confirmed,
+      "declined": self.declined,
+      "attendees": self.attendees,
+      "started": self.started,
+      "ended": self.ended,
+      "conversation_log": self.conversation_log
+    }
+  
+  @classmethod
+  def from_dict(cls, data):
+    """Create event from dictionary."""
+    event = cls(
+      event_id=data["event_id"],
+      name=data["name"],
+      event_type=data["event_type"],
+      location=tuple(data["location"]) if isinstance(data["location"], list) else data["location"],
+      start_time=datetime.datetime.strptime(data["start_time"], "%B %d, %Y, %H:%M:%S"),
+      duration_minutes=data["duration_minutes"],
+      organizer=data.get("organizer"),
+      invited=data.get("invited", []),
+      description=data.get("description", "")
+    )
+    event.confirmed = data.get("confirmed", [])
+    event.declined = data.get("declined", [])
+    event.attendees = data.get("attendees", [])
+    event.started = data.get("started", False)
+    event.ended = data.get("ended", False)
+    event.conversation_log = data.get("conversation_log", [])
+    return event
+
+
+class GroupEventManager:
+  """
+  Manages all group events in the simulation.
+  Handles event scheduling, notifications, and execution.
+  """
+  
+  def __init__(self):
+    self.events = {}  # event_id -> GroupEvent
+    self.active_events = []  # Currently running events
+    self.upcoming_events = []  # Scheduled future events
+    self.past_events = []  # Completed events
+    self.next_event_id = 1
+  
+  def create_event(self, name, event_type, location, start_time,
+                   duration_minutes, organizer=None, invited=None, 
+                   description=None):
+    """Create a new group event."""
+    event_id = f"event_{self.next_event_id}"
+    self.next_event_id += 1
+    
+    event = GroupEvent(
+      event_id=event_id,
+      name=name,
+      event_type=event_type,
+      location=location,
+      start_time=start_time,
+      duration_minutes=duration_minutes,
+      organizer=organizer,
+      invited=invited,
+      description=description
+    )
+    
+    self.events[event_id] = event
+    self.upcoming_events.append(event_id)
+    
+    return event
+  
+  def update(self, current_time, personas):
+    """
+    Update event states based on current time.
+    
+    Args:
+      current_time: Current simulation datetime
+      personas: Dictionary of persona objects
+    """
+    # Check upcoming events that should start
+    for event_id in self.upcoming_events[:]:
+      event = self.events[event_id]
+      if event.should_start(current_time):
+        event.started = True
+        self.upcoming_events.remove(event_id)
+        self.active_events.append(event_id)
+        self._notify_event_start(event, personas)
+    
+    # Check active events that should end
+    for event_id in self.active_events[:]:
+      event = self.events[event_id]
+      if event.should_end(current_time):
+        event.ended = True
+        self.active_events.remove(event_id)
+        self.past_events.append(event_id)
+        self._notify_event_end(event, personas)
+  
+  def _notify_event_start(self, event, personas):
+    """Notify attendees that event is starting."""
+    for persona_name in event.confirmed + [event.organizer]:
+      if persona_name and persona_name in personas:
+        persona = personas[persona_name]
+        # Add event to persona's awareness
+        if hasattr(persona.scratch, 'pending_invites'):
+          persona.scratch.pending_invites.append({
+            "type": "event_start",
+            "event_id": event.event_id,
+            "event_name": event.name,
+            "location": event.location
+          })
+  
+  def _notify_event_end(self, event, personas):
+    """Notify attendees that event has ended."""
+    for persona_name in event.attendees:
+      if persona_name in personas:
+        persona = personas[persona_name]
+        # Clear event from persona's current group if applicable
+        if hasattr(persona.scratch, 'current_group'):
+          if persona.scratch.current_group == event.event_id:
+            persona.scratch.current_group = None
+  
+  def get_events_at_location(self, location, current_time):
+    """Get all active events at a specific location."""
+    matching = []
+    for event_id in self.active_events:
+      event = self.events[event_id]
+      if event.location == location and event.is_active(current_time):
+        matching.append(event)
+    return matching
+  
+  def get_upcoming_events_for_persona(self, persona_name, current_time, 
+                                       time_window_hours=24):
+    """Get upcoming events that a persona is invited to."""
+    upcoming = []
+    end_window = current_time + datetime.timedelta(hours=time_window_hours)
+    
+    for event_id in self.upcoming_events:
+      event = self.events[event_id]
+      if (persona_name in event.invited or persona_name == event.organizer):
+        if event.start_time <= end_window:
+          upcoming.append(event)
+    
+    return sorted(upcoming, key=lambda e: e.start_time)
+  
+  def to_dict(self):
+    """Serialize manager state."""
+    return {
+      "events": {eid: e.to_dict() for eid, e in self.events.items()},
+      "active_events": self.active_events,
+      "upcoming_events": self.upcoming_events,
+      "past_events": self.past_events,
+      "next_event_id": self.next_event_id
+    }
+  
+  @classmethod
+  def from_dict(cls, data):
+    """Deserialize manager from dict."""
+    manager = cls()
+    manager.events = {eid: GroupEvent.from_dict(e) 
+                      for eid, e in data.get("events", {}).items()}
+    manager.active_events = data.get("active_events", [])
+    manager.upcoming_events = data.get("upcoming_events", [])
+    manager.past_events = data.get("past_events", [])
+    manager.next_event_id = data.get("next_event_id", 1)
+    return manager
+
+
+# Global event manager instance
+_event_manager = None
+
+def get_event_manager():
+  """Get the global event manager instance."""
+  global _event_manager
+  if _event_manager is None:
+    _event_manager = GroupEventManager()
+  return _event_manager
+
+
+# ---------------------------------------------------------------------------
 # Configurable-agent / arena helpers
 # ---------------------------------------------------------------------------
 # These paths mirror the layout described in the agent_templates, arenas, and
