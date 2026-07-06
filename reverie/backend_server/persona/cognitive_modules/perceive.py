@@ -181,9 +181,161 @@ def perceive(persona, maze):
   return ret_events
 
 
-
-
+def detect_agent_clusters(persona, maze, nearby_tiles, min_group_size=3, cluster_radius=2):
+  """
+  Detects clusters of agents nearby that could form a group.
   
+  INPUT:
+    persona: An instance of <Persona> that represents the current persona.
+    maze: An instance of <Maze> that represents the current maze.
+    nearby_tiles: List of nearby tile coordinates.
+    min_group_size: Minimum number of agents to form a group (default 3).
+    cluster_radius: Maximum tile distance between agents in a cluster.
+  OUTPUT:
+    clusters: List of agent name clusters, e.g., [["Agent1", "Agent2", "Agent3"], ...]
+  """
+  # Find all nearby agents and their positions
+  agent_positions = {}  # {agent_name: (x, y)}
+  
+  for tile in nearby_tiles:
+    tile_details = maze.access_tile(tile)
+    if tile_details["events"]:
+      for event in tile_details["events"]:
+        s, p, o, desc = event
+        # Check if this is an agent (subject contains a colon for personas)
+        if ":" in s and "persona" in s.lower():
+          agent_name = s.split(":")[-1]
+          if agent_name != persona.name:  # Don't include self
+            agent_positions[agent_name] = tile
+  
+  if len(agent_positions) < min_group_size - 1:  # -1 because we might join
+    return []
+  
+  # Cluster agents based on proximity using simple clustering
+  clusters = []
+  visited = set()
+  
+  for agent_name, pos in agent_positions.items():
+    if agent_name in visited:
+      continue
+    
+    # Start a new cluster
+    cluster = [agent_name]
+    visited.add(agent_name)
+    
+    # Find all agents close to this cluster
+    to_check = [agent_name]
+    while to_check:
+      current = to_check.pop()
+      current_pos = agent_positions[current]
+      
+      for other_name, other_pos in agent_positions.items():
+        if other_name in visited:
+          continue
+        
+        # Check if within cluster radius
+        dist = math.dist([current_pos[0], current_pos[1]], 
+                         [other_pos[0], other_pos[1]])
+        if dist <= cluster_radius:
+          cluster.append(other_name)
+          visited.add(other_name)
+          to_check.append(other_name)
+    
+    # Only keep clusters that meet minimum size
+    if len(cluster) >= min_group_size - 1:  # -1 because persona might join
+      clusters.append(cluster)
+  
+  return clusters
+
+
+def perceive_groups(persona, maze, nearby_tiles):
+  """
+  Perceives group interactions happening nearby and updates persona's
+  group awareness.
+  
+  INPUT:
+    persona: An instance of <Persona>
+    maze: An instance of <Maze>
+    nearby_tiles: List of nearby tile coordinates
+  OUTPUT:
+    group_events: List of perceived group events/activities
+  """
+  group_events = []
+  
+  # Detect nearby agent clusters
+  clusters = detect_agent_clusters(persona, maze, nearby_tiles)
+  
+  # Update persona's awareness of nearby group members
+  all_nearby_members = []
+  for cluster in clusters:
+    all_nearby_members.extend(cluster)
+  persona.scratch.nearby_group_members = all_nearby_members
+  
+  # Check if persona should join any cluster
+  curr_pos = persona.scratch.curr_tile
+  for cluster in clusters:
+    # Calculate cluster center
+    cluster_positions = []
+    for tile in nearby_tiles:
+      tile_details = maze.access_tile(tile)
+      if tile_details["events"]:
+        for event in tile_details["events"]:
+          s = event[0]
+          if ":" in s:
+            agent_name = s.split(":")[-1]
+            if agent_name in cluster:
+              cluster_positions.append(tile)
+              break
+    
+    if cluster_positions:
+      # Calculate average position of cluster
+      avg_x = sum(p[0] for p in cluster_positions) / len(cluster_positions)
+      avg_y = sum(p[1] for p in cluster_positions) / len(cluster_positions)
+      
+      # Check if persona is close to this cluster
+      dist_to_cluster = math.dist([curr_pos[0], curr_pos[1]], [avg_x, avg_y])
+      
+      if dist_to_cluster <= 3:  # Close enough to be considered part of group
+        # Create a group event description
+        if len(cluster) == 2:
+          group_desc = f"{cluster[0]} and {cluster[1]} are talking together"
+        else:
+          group_desc = f"{cluster[0]}, {cluster[1]}, and {len(cluster)-2} others are gathered"
+        
+        group_events.append({
+          "type": "group_gathering",
+          "members": cluster,
+          "description": group_desc,
+          "distance": dist_to_cluster,
+          "center": (avg_x, avg_y)
+        })
+  
+  return group_events
+
+
+def perceive_with_groups(persona, maze):
+  """
+  Extended perceive function that includes group detection.
+  Wraps the standard perceive() with additional group awareness.
+  
+  INPUT:
+    persona: An instance of <Persona>
+    maze: An instance of <Maze>
+  OUTPUT:
+    ret_events: List of <ConceptNode> instances (from standard perceive)
+    group_events: List of perceived group activities
+  """
+  # Get nearby tiles first (needed for both perception types)
+  nearby_tiles = maze.get_nearby_tiles(persona.scratch.curr_tile, 
+                                       persona.scratch.vision_r)
+  
+  # Run standard perception
+  ret_events = perceive(persona, maze)
+  
+  # Also perceive groups
+  group_events = perceive_groups(persona, maze, nearby_tiles)
+  
+  return ret_events, group_events
 
 
 

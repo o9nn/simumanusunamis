@@ -158,6 +158,28 @@ class Scratch:
     # e.g., [(50, 10), (49, 10), (48, 10), ...]
     self.planned_path = []
 
+    # GROUP INTERACTION STATE
+    # <current_group> is the ID of the group the persona is currently part of.
+    # None if not in any group.
+    self.current_group = None
+    # <group_role> is the role the persona has in their current group.
+    # e.g., "leader", "contributor", "observer"
+    self.group_role = None
+    # <pending_invites> is a list of pending group/event invitations.
+    # Each invite is a dict with keys: type, from, group_id/event_id, timestamp
+    self.pending_invites = []
+    # <relationship_scores> tracks relationship strength with other personas.
+    # {persona_name: float score from 0.0 to 1.0}
+    self.relationship_scores = {}
+    # <shared_goals> is a list of goal IDs that this persona is working on
+    # with other personas.
+    self.shared_goals = []
+    # <group_conversation_context> tracks the current group conversation state.
+    # Contains recent group chat history and context.
+    self.group_conversation_context = None
+    # <nearby_group_members> tracks which group members are nearby.
+    self.nearby_group_members = []
+
     if check_if_file_exists(f_saved): 
       # If we have a bootstrap file, load that here. 
       scratch_load = json.load(open(f_saved))
@@ -233,6 +255,15 @@ class Scratch:
       self.act_path_set = scratch_load["act_path_set"]
       self.planned_path = scratch_load["planned_path"]
 
+      # Load group interaction state (with defaults for backwards compatibility)
+      self.current_group = scratch_load.get("current_group", None)
+      self.group_role = scratch_load.get("group_role", None)
+      self.pending_invites = scratch_load.get("pending_invites", [])
+      self.relationship_scores = scratch_load.get("relationship_scores", {})
+      self.shared_goals = scratch_load.get("shared_goals", [])
+      self.group_conversation_context = scratch_load.get("group_conversation_context", None)
+      self.nearby_group_members = scratch_load.get("nearby_group_members", [])
+
 
   def save(self, out_json):
     """
@@ -305,6 +336,15 @@ class Scratch:
 
     scratch["act_path_set"] = self.act_path_set
     scratch["planned_path"] = self.planned_path
+
+    # Save group interaction state
+    scratch["current_group"] = self.current_group
+    scratch["group_role"] = self.group_role
+    scratch["pending_invites"] = self.pending_invites
+    scratch["relationship_scores"] = self.relationship_scores
+    scratch["shared_goals"] = self.shared_goals
+    scratch["group_conversation_context"] = self.group_conversation_context
+    scratch["nearby_group_members"] = self.nearby_group_members
 
     with open(out_json, "w") as outfile:
       json.dump(scratch, outfile, indent=2) 
